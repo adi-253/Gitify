@@ -1,3 +1,5 @@
+// TODO - Create a UNIVERSAL HTTP CLIENT INSTEAD OF OPENING AND CLOSING AGAIN WHILE CALLING APIS
+
 // use mux router only when multiple routes are used
 package cmd
 
@@ -54,7 +56,7 @@ func generateRandomString(length int) (string, error) {
 func exchangeToken(code string) (*SpotfiyToken, error) {
 	tokenURL := "https://accounts.spotify.com/api/token" // here the request goes in encoded form and it is POST so it is not query params
 
-	data:= url.Values{}
+	data:= url.Values{}  // this is used for form encoded data or query parameters (here it is form encoded)
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
 	data.Set("redirect_uri",RedirectUrl)
@@ -148,5 +150,75 @@ func LoginHandler(w http.ResponseWriter, r *http.Request){
 	authURL.RawQuery = params.Encode()
 
 	http.Redirect(w, r, authURL.String(), http.StatusFound)
+}
+
+func RefreshToken() error {
+	var existing_token SpotfiyToken
+
+	
+	file, err := os.ReadFile("token.json")
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(file, &existing_token)
+	if err != nil {
+		return err
+	}
+
+	tokenURL := "https://accounts.spotify.com/api/token"
+
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", existing_token.RefreshToken)
+
+	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(Client_ID,Client_Secret)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	
+	body, err := io.ReadAll(resp.Body) // since you are using io.Readall() readall takes in all the incoming chunks of the data all togehter first and then converts to bytes so you cant use json.Encoder and decoder if you dont do this you can do the json.Encoder and Decoder
+	if err != nil {
+		return err
+	}
+
+	var new_token SpotfiyToken
+	err = json.Unmarshal(body, &new_token)
+	if err != nil {
+		return err
+	}
+
+	existing_token.AccessToken = new_token.AccessToken
+	existing_token.TokenType = new_token.TokenType
+	existing_token.ExpiresIn = new_token.ExpiresIn
+
+	// Refresh token may or may not be present
+	if new_token.RefreshToken != "" {
+		existing_token.RefreshToken = new_token.RefreshToken
+	}
+
+	updatedData, err := json.MarshalIndent(existing_token, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile("token.json", updatedData, 0644)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Access token refreshed successfully!")
+	return nil
 }
 
