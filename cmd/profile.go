@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 
 	"github.com/spf13/cobra"
 )
@@ -30,11 +29,7 @@ var profileCmd = &cobra.Command{
 			if err!=nil{
 				return err
 			}
-			body,err:=io.ReadAll(resp.Body)
-			if err!=nil{
-				return err
-			}
-			if err:=json.Unmarshal(body,&Response);err!=nil{
+			if err := json.NewDecoder(resp.Body).Decode(&Response); err != nil {
 				return err
 			}
 			fmt.Println("Username",Response.Username)
