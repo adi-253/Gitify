@@ -1,6 +1,7 @@
 // TODO - Create a UNIVERSAL HTTP CLIENT INSTEAD OF OPENING AND CLOSING AGAIN WHILE CALLING APIS
 
 // use mux router only when multiple routes are used
+// This is all logics of OAUTH 2.0 used in Spotify
 package cmd
 
 import (
