@@ -25,7 +25,7 @@ func openbrowser(url string) {
 }
 
 var loginCmd = &cobra.Command{
-	Use: "spotify login",
+	Use: "login",
 	Short: "For logging into spotify",
 	Run: func(cmd *cobra.Command, args []string) {
 
@@ -47,5 +47,5 @@ var loginCmd = &cobra.Command{
 }
 
 func init(){
-	rootCmd.AddCommand(loginCmd)
+	spotfiyCmd.AddCommand(loginCmd)
 }
