@@ -29,7 +29,7 @@ var profileCmd = &cobra.Command{
 			if err!=nil{
 				return err
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&Response); err != nil {
+			if err := json.NewDecoder(resp.Body).Decode(&Response); err != nil { // reason using this is because io.readall will read everything into memory first and then do the struct here directly what is needed is added from struct val
 				return err
 			}
 			fmt.Println("Username",Response.Username)
