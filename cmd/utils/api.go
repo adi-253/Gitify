@@ -2,7 +2,7 @@
 
 // use mux router only when multiple routes are used
 // This is all logics of OAUTH 2.0 used in Spotify
-package cmd
+package utils
 
 import (
 	"crypto/rand"

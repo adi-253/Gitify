@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/adi-253/Gitify/cmd/utils"
 	"github.com/spf13/cobra"
 )
 type Profile struct {
@@ -21,7 +22,7 @@ var profileCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error{
 			var Response Profile
 			url:= "https://api.spotify.com/v1/me"
-			client,err:=NewSpotifyClient()
+			client,err:=utils.NewSpotifyClient()
 			if err!=nil{
 				return err
 			}
