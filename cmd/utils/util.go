@@ -54,7 +54,7 @@ func (s *SpotifyClient) makeRequest(method, url string, body io.Reader) (*http.R
 		resp.Body.Close()
 		fmt.Println("Access token expired. Refreshing...")
 
-		// Call your existing RefreshToken() function
+		// Call  existing RefreshToken() function
 		if err := RefreshToken(); err != nil {
 			return nil, fmt.Errorf("failed to refresh token: %v", err)
 		}

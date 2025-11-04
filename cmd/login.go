@@ -79,6 +79,13 @@ var loginCmd = &cobra.Command{
 		if err := server.Shutdown(ctx); err != nil {
 			fmt.Printf("Server shutdown error: %v\n", err)
 		}
+
+		//Also run storing profile info
+		err:=getUserInfo()
+		if err!=nil{
+			fmt.Print("Couldnt fetch profile info")
+		}
+		fmt.Printf("Successfuly stored user profile")
 	},
 }
 
