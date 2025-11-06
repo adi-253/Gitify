@@ -90,5 +90,5 @@ var loginCmd = &cobra.Command{
 }
 
 func init(){
-	spotfiyCmd.AddCommand(loginCmd)
+	spotifyCmd.AddCommand(loginCmd)
 }

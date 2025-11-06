@@ -3,10 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+
 	"github.com/adi-253/Gitify/cmd/utils"
 	"github.com/spf13/cobra"
-	"net/http"
 )
 
 type Profile struct {
@@ -90,5 +91,5 @@ var profileCmd = &cobra.Command{
 }
 
 func init(){
-	spotfiyCmd.AddCommand(profileCmd)
+	spotifyCmd.AddCommand(profileCmd)
 }

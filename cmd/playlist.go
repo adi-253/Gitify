@@ -10,31 +10,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ---------------- Structs ----------------
 
+// Only keep essential fields for CLI & playback integration
 type PlaylistsResponse struct {
-	Total int        `json:"total"`
 	Items []Playlist `json:"items"`
+	Next  string     `json:"next"`
 }
 
 type Playlist struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	ID          string      `json:"id"`
-	Href        string      `json:"href"`
-	Tracks      PlaylistRef `json:"tracks"`
-}
-
-type PlaylistRef struct {
-	Href string `json:"href"`
+	Name   string `json:"name"`
+	ID     string `json:"id"`
+	Tracks struct {
+		Href string `json:"href"`
+	} `json:"tracks"`
 }
 
 type PlaylistTracksResponse struct {
-	Href     string          `json:"href"`
-	Limit    int             `json:"limit"`
-	Next     string          `json:"next"`
-	Offset   int             `json:"offset"`
-	Total    int             `json:"total"`
-	Items    []PlaylistTrack `json:"items"`
+	Items []PlaylistTrack `json:"items"`
+	Next  string           `json:"next"`
 }
 
 type PlaylistTrack struct {
@@ -44,28 +38,22 @@ type PlaylistTrack struct {
 type Track struct {
 	Name    string   `json:"name"`
 	ID      string   `json:"id"`
-	Href    string   `json:"href"`
 	Artists []Artist `json:"artists"`
-	Album   Album    `json:"album"`
 }
 
 type Artist struct {
 	Name string `json:"name"`
 }
 
-type Album struct {
-	Name string `json:"name"`
-}
-
-// --------- Command ---------
+// ---------------- Command ----------------
 
 var playlistCmd = &cobra.Command{
-	Use:   "show playlist",
-	Short: "Fetching Playlist Info",
-	Run: func(c *cobra.Command, args []string) {
+	Use:   "playlist",
+	Short: "Fetch and view user playlists and tracks",
+	Run: func(cmd *cobra.Command, args []string) {
 		data, err := os.ReadFile("profile.json")
 		if err != nil {
-			fmt.Println("Could not get user data. Login again")
+			fmt.Println("Could not get user data. Please login again.")
 			return
 		}
 
@@ -82,52 +70,53 @@ var playlistCmd = &cobra.Command{
 			return
 		}
 
-		url := "https://api.spotify.com/v1/users/" + userinfo.Userid + "/playlists"
-		resp, err := client.Get(url)
+		baseURL := "https://api.spotify.com/v1/users/" + userinfo.Userid + "/playlists"
+		allPlaylists, err := fetchAllPlaylists(client, baseURL)
 		if err != nil {
-			fmt.Printf("HTTP request failed: %s\n", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		var playlists PlaylistsResponse
-		err = json.NewDecoder(resp.Body).Decode(&playlists)
-		if err != nil {
-			fmt.Printf("Error decoding JSON response: %s\n", err)
+			fmt.Printf("Error fetching playlists: %s\n", err)
 			return
 		}
 
-		if len(playlists.Items) == 0 {
+		if len(allPlaylists) == 0 {
 			fmt.Println("No playlists found.")
 			return
 		}
 
-		fmt.Printf("Total Playlists: %d\n\n", playlists.Total)
-		for i, p := range playlists.Items {
+		fmt.Printf("\n🎵 You have %d playlists:\n\n", len(allPlaylists))
+		for i, p := range allPlaylists {
 			fmt.Printf("[%d] %s\n", i+1, p.Name)
 		}
 
-		fmt.Print("\nEnter playlist number: ")
+		fmt.Print("\nEnter playlist number to view songs: ")
 		var choice int
 		_, err = fmt.Scan(&choice)
-		if err != nil || choice < 1 || choice > len(playlists.Items) {
+		if err != nil || choice < 1 || choice > len(allPlaylists) {
 			fmt.Println("Invalid choice.")
 			return
 		}
 
-		selected := playlists.Items[choice-1]
-		fmt.Printf("\nFetching tracks for: %s\n", selected.Name)
+		selected := allPlaylists[choice-1]
+		fmt.Printf("\nFetching songs for: %s\n\n", selected.Name)
 
-		fetchAndPrintTracks(client, selected.Tracks.Href)
+		tracks, err := fetchAllTracks(client, selected.Tracks.Href)
+		if err != nil {
+			fmt.Printf("Error fetching tracks: %s\n", err)
+			return
+		}
+
+		for i, t := range tracks {
+			fmt.Printf("%d. %s — %s\n", i+1, t.Name, joinArtists(t.Artists))
+		}
 	},
 }
 
-// --------- Helper for pagination ---------
+// ---------------- Helper Functions ----------------
 
-func fetchAndPrintTracks(client *utils.SpotifyClient, href string) {
+func fetchAllPlaylists(client *utils.SpotifyClient, href string) ([]Playlist, error) {
+	var all []Playlist
 	next := href
+
 	for next != "" {
-		// Add limit and offset explicitly if missing
 		u, _ := url.Parse(next)
 		q := u.Query()
 		if q.Get("limit") == "" {
@@ -137,27 +126,53 @@ func fetchAndPrintTracks(client *utils.SpotifyClient, href string) {
 
 		resp, err := client.Get(u.String())
 		if err != nil {
-			fmt.Printf("Failed to fetch tracks: %s\n", err)
-			return
+			return nil, err
 		}
 		defer resp.Body.Close()
 
-		var tracksResp PlaylistTracksResponse
-		err = json.NewDecoder(resp.Body).Decode(&tracksResp)
-		if err != nil {
-			fmt.Printf("Error decoding tracks JSON: %s\n", err)
-			return
+		var res PlaylistsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			return nil, err
 		}
 
-		for i, item := range tracksResp.Items {
-			fmt.Printf("%d. %s — %s (%s)\n", i+1+tracksResp.Offset,
-				item.Track.Name,
-				joinArtists(item.Track.Artists),
-				item.Track.Album.Name)
-		}
-
-		next = tracksResp.Next
+		all = append(all, res.Items...)
+		next = res.Next
 	}
+
+	return all, nil
+}
+
+func fetchAllTracks(client *utils.SpotifyClient, href string) ([]Track, error) {
+	var all []Track
+	next := href
+
+	for next != "" {
+		u, _ := url.Parse(next)
+		q := u.Query()
+		if q.Get("limit") == "" {
+			q.Set("limit", "100")
+		}
+		u.RawQuery = q.Encode()
+
+		resp, err := client.Get(u.String())
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		var res PlaylistTracksResponse
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			return nil, err
+		}
+
+		for _, item := range res.Items {
+			all = append(all, item.Track)
+		}
+
+		next = res.Next
+	}
+
+	return all, nil
 }
 
 func joinArtists(artists []Artist) string {
@@ -171,7 +186,6 @@ func joinArtists(artists []Artist) string {
 	return names
 }
 
-
-func init(){
-	spotfiyCmd.AddCommand(playlistCmd)
+func init() {
+	spotifyCmd.AddCommand(playlistCmd)
 }

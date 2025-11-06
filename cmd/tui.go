@@ -40,7 +40,7 @@ var (
 	errorColor     = tcell.ColorRed
 	successColor   = tcell.ColorGreen
 	borderColor    = tcell.ColorGray
-	infoColor      = tcell.ColorLightBlue
+	// infoColor      = tcell.ColorLightBlue
 	warningColor   = tcell.ColorOrange
 )
 
@@ -649,8 +649,8 @@ func (t *TUIApp) loadPlaylistTracks(playlistIndex int) {
 				t.trackList.SetCell(row, 2, 
 					tview.NewTableCell(artists).SetTextColor(tcell.ColorLightBlue))
 				
-				t.trackList.SetCell(row, 3, 
-					tview.NewTableCell(item.Track.Album.Name).SetTextColor(tcell.ColorGreen))
+				// t.trackList.SetCell(row, 3, 
+				// 	tview.NewTableCell(item.Track.Album.Name).SetTextColor(tcell.ColorGreen))
 			}
 			
 			// Update title with track count
@@ -674,5 +674,5 @@ var tuiCmd = &cobra.Command{
 }
 
 func init() {
-	spotfiyCmd.AddCommand(tuiCmd)
+	spotifyCmd.AddCommand(tuiCmd)
 }
