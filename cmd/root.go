@@ -11,17 +11,29 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "Gitify",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Use:   "gitify",
+	Short: "A beautiful terminal interface for Spotify",
+	Long: `Gitify - A Terminal User Interface for Spotify
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+Gitify provides both command-line interface and a beautiful TUI (Terminal User Interface) 
+for managing your Spotify playlists, tracks, and profile. The TUI is inspired by Lazygit
+and offers an intuitive, keyboard-driven workflow.
+
+Usage:
+  gitify spotify           Access Spotify commands
+  gitify spotify tui       Launch the TUI interface
+  gitify spotify login     Login to Spotify
+  gitify spotify me        Show your profile
+
+Examples:
+  gitify spotify tui            # Launch TUI
+  gitify spotify login          # Login via CLI
+  gitify spotify me             # Show profile via CLI
+  gitify spotify show playlist  # Show playlists via CLI`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Show help when no subcommand is provided
+		cmd.Help()
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

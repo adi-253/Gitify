@@ -1,0 +1,678 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/adi-253/Gitify/cmd/utils"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+	"github.com/spf13/cobra"
+)
+
+// TUIApp represents the main TUI application
+type TUIApp struct {
+	app         *tview.Application
+	pages       *tview.Pages
+	sidebar     *tview.List
+	mainContent *tview.Flex
+	statusBar   *tview.TextView
+	helpModal   *tview.Modal
+	
+	// Content panels
+	playlistList   *tview.List
+	trackList      *tview.Table
+	profileView    *tview.TextView
+	
+	// State
+	currentPanel   string
+	isLoggedIn     bool
+	userProfile    *Profile
+	playlists      []Playlist
+	currentTracks  []PlaylistTrack
+}
+
+// Colors and styles similar to Lazygit
+var (
+	primaryColor   = tcell.ColorBlue
+	selectedColor  = tcell.ColorYellow
+	errorColor     = tcell.ColorRed
+	successColor   = tcell.ColorGreen
+	borderColor    = tcell.ColorGray
+	infoColor      = tcell.ColorLightBlue
+	warningColor   = tcell.ColorOrange
+)
+
+func NewTUIApp() *TUIApp {
+	app := &TUIApp{
+		app:          tview.NewApplication(),
+		pages:        tview.NewPages(),
+		currentPanel: "sidebar",
+	}
+	
+	app.checkLoginStatus()
+	app.setupUI()
+	app.setupKeybindings()
+	
+	return app
+}
+
+func (t *TUIApp) checkLoginStatus() {
+	// Check if user is logged in by looking for token.json
+	if _, err := os.Stat("token.json"); err == nil {
+		t.isLoggedIn = true
+		// Try to load profile data
+		if data, err := os.ReadFile("profile.json"); err == nil {
+			var profile Profile
+			if json.Unmarshal(data, &profile) == nil {
+				t.userProfile = &profile
+			}
+		}
+	}
+}
+
+func (t *TUIApp) setupUI() {
+	// Create sidebar
+	t.sidebar = tview.NewList().
+		SetMainTextColor(tcell.ColorWhite).
+		SetSelectedTextColor(selectedColor).
+		SetSelectedBackgroundColor(primaryColor)
+	
+	// Create main content area
+	t.mainContent = tview.NewFlex().SetDirection(tview.FlexRow)
+	
+	// Create status bar
+	t.statusBar = tview.NewTextView()
+	t.statusBar.SetTextColor(tcell.ColorWhite)
+	t.statusBar.SetBackgroundColor(primaryColor)
+	t.statusBar.SetText(" GitifyTUI | Press 'h' for help | 'q' to quit ")
+	
+	// Setup sidebar items
+	t.setupSidebar()
+	
+	// Show welcome screen initially
+	t.showWelcomeScreen()
+	
+	// Create main layout
+	mainFlex := tview.NewFlex().
+		AddItem(t.sidebar, 25, 0, true).
+		AddItem(t.mainContent, 0, 1, false)
+	
+	// Root layout with status bar
+	rootFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(mainFlex, 0, 1, true).
+		AddItem(t.statusBar, 1, 0, false)
+	
+	// Create help modal
+	t.createHelpModal()
+	
+	// Add to pages
+	t.pages.AddPage("main", rootFlex, true, true)
+	t.pages.AddPage("help", t.helpModal, true, false)
+	
+	t.app.SetRoot(t.pages, true)
+}
+
+func (t *TUIApp) setupSidebar() {
+	t.sidebar.Clear()
+	
+	// Add sidebar items based on login status
+	if !t.isLoggedIn {
+		t.sidebar.AddItem("🔐 Login", "Login to Spotify", 'l', t.showLoginPanel)
+		t.sidebar.AddItem("❌ Not Logged In", "Please login first", 0, nil)
+	} else {
+		username := "User"
+		if t.userProfile != nil {
+			username = t.userProfile.Username
+		}
+		t.sidebar.AddItem("👤 "+username, "User Profile", 'p', t.showProfilePanel)
+		t.sidebar.AddItem("🎵 Playlists", "View your playlists", 'l', t.showPlaylistPanel)
+		t.sidebar.AddItem("🔄 Refresh", "Refresh data", 'r', t.refreshData)
+		t.sidebar.AddItem("🚪 Logout", "Clear login data", 0, t.logout)
+	}
+	
+	t.sidebar.AddItem("❓ Help", "Show help", 'h', t.showHelp)
+	t.sidebar.AddItem("🚪 Quit", "Exit application", 'q', t.quit)
+	
+	// Set border and title
+	t.sidebar.SetBorder(true).
+		SetTitle(" Navigation ").
+		SetBorderColor(borderColor)
+}
+
+func (t *TUIApp) setupKeybindings() {
+	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEsc:
+			if t.pages.HasPage("help") {
+				name, _ := t.pages.GetFrontPage()
+				if name == "help" {
+					t.pages.SwitchToPage("main")
+					return nil
+				}
+			}
+			t.focusSidebar()
+			return nil
+		case tcell.KeyTab:
+			t.switchFocus()
+			return nil
+		}
+		
+		switch event.Rune() {
+		case 'q':
+			if t.currentPanel == "sidebar" {
+				t.quit()
+				return nil
+			}
+		case 'h':
+			t.showHelp()
+			return nil
+		case 'p':
+			if t.isLoggedIn {
+				t.showProfilePanel()
+			}
+			return nil
+		case 'l':
+			if t.isLoggedIn {
+				t.showPlaylistPanel()
+			} else {
+				t.showLoginPanel()
+			}
+			return nil
+		case 'r':
+			if t.isLoggedIn {
+				t.refreshData()
+			}
+			return nil
+		}
+		
+		return event
+	})
+}
+
+func (t *TUIApp) createHelpModal() {
+	helpText := `
+╭─────── GitifyTUI Help ───────╮
+
+ Navigation:
+   ↑/↓, j/k    Navigate lists
+   Tab         Switch focus
+   Esc         Focus sidebar
+   Enter       Select item
+
+ Actions:
+   l           Login/View playlists  
+   p           View profile
+   r           Refresh data
+   h           Show this help
+   q           Quit application
+
+ In Playlists:
+   Enter       View playlist tracks
+   Esc         Back to playlists
+
+╰──────────────────────────────╯
+
+Press Esc to close this help.
+`
+	
+	t.helpModal = tview.NewModal().
+		SetText(helpText).
+		AddButtons([]string{"Close"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			t.pages.SwitchToPage("main")
+		})
+}
+
+func (t *TUIApp) Run() error {
+	return t.app.Run()
+}
+
+// Panel switching functions
+func (t *TUIApp) focusSidebar() {
+	t.currentPanel = "sidebar"
+	t.app.SetFocus(t.sidebar)
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) switchFocus() {
+	switch t.currentPanel {
+	case "sidebar":
+		if t.playlistList != nil && t.playlistList.GetItemCount() > 0 {
+			t.currentPanel = "playlists"
+			t.app.SetFocus(t.playlistList)
+		} else if t.trackList != nil && t.trackList.GetRowCount() > 0 {
+			t.currentPanel = "tracks"
+			t.app.SetFocus(t.trackList)
+		}
+	case "playlists":
+		if t.trackList != nil && t.trackList.GetRowCount() > 0 {
+			t.currentPanel = "tracks"
+			t.app.SetFocus(t.trackList)
+		} else {
+			t.focusSidebar()
+		}
+	case "tracks":
+		t.focusSidebar()
+	default:
+		t.focusSidebar()
+	}
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) updateStatusBar() {
+	var text string
+	switch t.currentPanel {
+	case "sidebar":
+		text = " Navigation | Tab: switch focus | Enter: select | h: help | q: quit "
+	case "playlists": 
+		text = " Playlists | Enter: view tracks | Esc: back | Tab: switch focus "
+	case "tracks":
+		text = " Tracks | Esc: back | Tab: switch focus "
+	default:
+		text = " GitifyTUI | Press 'h' for help | 'q' to quit "
+	}
+	
+	if !t.isLoggedIn {
+		text = " Not logged in | Press 'l' to login | h: help | q: quit "
+	}
+	
+	t.statusBar.SetText(text)
+}
+
+func (t *TUIApp) showWelcomeScreen() {
+	// Clear main content
+	t.mainContent.Clear()
+	
+	var welcomeText string
+	if t.isLoggedIn {
+		username := "User"
+		if t.userProfile != nil {
+			username = t.userProfile.Username
+		}
+		welcomeText = fmt.Sprintf(`
+╭──────────────────────────────────────╮
+│            Welcome to GitifyTUI       │
+│   A Beautiful Terminal UI for Spotify │
+╰──────────────────────────────────────╯
+
+👋 Hello, %s!
+
+You're successfully logged in to Spotify.
+Choose an option from the sidebar to get started:
+
+🎵 View your playlists
+👤 Check your profile  
+🔄 Refresh your data
+❓ Get help
+
+Navigate with ↑↓ or j/k keys
+Press Enter to select, Tab to switch focus
+`, username)
+	} else {
+		welcomeText = `
+╭──────────────────────────────────────╮
+│            Welcome to GitifyTUI       │
+│   A Beautiful Terminal UI for Spotify │
+╰──────────────────────────────────────╯
+
+🔐 You need to login first!
+
+To get started:
+1. Press 'l' to see login instructions
+2. Or run 'gitify spotify login' in terminal
+3. Complete OAuth in your browser
+4. Return here and press 'r' to refresh
+
+Press 'h' for help or 'q' to quit
+`
+	}
+	
+	welcomeView := tview.NewTextView().
+		SetText(welcomeText).
+		SetTextColor(tcell.ColorWhite).
+		SetBorder(true).
+		SetTitle(" Welcome ").
+		SetBorderColor(primaryColor)
+	
+	t.mainContent.AddItem(welcomeView, 0, 1, false)
+}
+
+// Action functions
+func (t *TUIApp) showHelp() {
+	t.pages.SwitchToPage("help")
+}
+
+func (t *TUIApp) quit() {
+	t.app.Stop()
+}
+
+func (t *TUIApp) showLoginPanel() {
+	if t.isLoggedIn {
+		return
+	}
+	
+	// Clear main content
+	t.mainContent.Clear()
+	
+	loginText := tview.NewTextView().
+		SetText(`🔐 Login to Spotify
+
+To get started with Gitify:
+
+1. Open a new terminal window/tab
+2. Run: gitify spotify login
+3. Complete OAuth in your browser  
+4. Return here and press 'r' to refresh
+
+Alternatively:
+• Press 'q' to quit and use CLI mode
+• Press Esc to go back to navigation
+
+Status: Not logged in`).
+		SetTextColor(tcell.ColorWhite).
+		SetBorder(true).
+		SetTitle(" Login Instructions ").
+		SetBorderColor(warningColor)
+	
+	t.mainContent.AddItem(loginText, 0, 1, false)
+	t.currentPanel = "login"
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) logout() {
+	// Remove token and profile files
+	os.Remove("token.json")
+	os.Remove("profile.json")
+	
+	t.isLoggedIn = false
+	t.userProfile = nil
+	t.playlists = nil
+	t.currentTracks = nil
+	
+	t.setupSidebar()
+	t.mainContent.Clear()
+	
+	logoutText := tview.NewTextView().
+		SetText("✅ Successfully logged out!\n\nAll login data has been cleared.\nPress 'l' to login again.").
+		SetTextColor(successColor).
+		SetBorder(true).
+		SetTitle(" Logout ").
+		SetBorderColor(borderColor)
+	
+	t.mainContent.AddItem(logoutText, 0, 1, false)
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) refreshData() {
+	if !t.isLoggedIn {
+		return
+	}
+	
+	// Refresh login status and profile
+	t.checkLoginStatus()
+	t.setupSidebar()
+	
+	// If we're currently viewing playlists, refresh them
+	if t.currentPanel == "playlists" || t.currentPanel == "tracks" {
+		t.showPlaylistPanel()
+	}
+	
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) showProfilePanel() {
+	if !t.isLoggedIn || t.userProfile == nil {
+		return
+	}
+	
+	// Clear main content
+	t.mainContent.Clear()
+	
+	t.profileView = tview.NewTextView()
+	profileText := fmt.Sprintf(`👤 User Profile
+
+Name: %s
+Email: %s
+Spotify ID: %s
+Spotify URL: %s
+
+Press Esc to go back to navigation.`,
+		t.userProfile.Username,
+		t.userProfile.Email,
+		t.userProfile.Userid,
+		t.userProfile.ExternalURLs.Spotify)
+	
+	t.profileView.SetText(profileText).
+		SetTextColor(tcell.ColorWhite).
+		SetBorder(true).
+		SetTitle(" Profile ").
+		SetBorderColor(borderColor)
+	
+	t.mainContent.AddItem(t.profileView, 0, 1, false)
+	t.currentPanel = "profile"
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) showPlaylistPanel() {
+	if !t.isLoggedIn {
+		return
+	}
+	
+	// Clear main content
+	t.mainContent.Clear()
+	
+	// Create playlist list
+	t.playlistList = tview.NewList().
+		SetMainTextColor(tcell.ColorWhite).
+		SetSelectedTextColor(selectedColor).
+		SetSelectedBackgroundColor(primaryColor)
+	
+	t.playlistList.SetBorder(true).
+		SetTitle(" Playlists ").
+		SetBorderColor(borderColor)
+	
+	// Load playlists
+	t.loadPlaylists()
+	
+	// Create tracks table
+	t.trackList = tview.NewTable().
+		SetBorders(false).
+		SetSeparator('│')
+	
+	t.trackList.SetBorder(true).
+		SetTitle(" Tracks ").
+		SetBorderColor(borderColor)
+	
+	// Layout: playlist list on left, tracks on right
+	contentFlex := tview.NewFlex().
+		AddItem(t.playlistList, 0, 1, true).
+		AddItem(t.trackList, 0, 2, false)
+	
+	t.mainContent.AddItem(contentFlex, 0, 1, true)
+	
+	t.currentPanel = "playlists"
+	t.app.SetFocus(t.playlistList)
+	t.updateStatusBar()
+}
+
+func (t *TUIApp) loadPlaylists() {
+	if !t.isLoggedIn || t.userProfile == nil {
+		return
+	}
+	
+	t.playlistList.Clear()
+	t.playlistList.AddItem("Loading playlists...", "", 0, nil)
+	
+	// Load playlists in background
+	go func() {
+		client, err := utils.NewSpotifyClient()
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.playlistList.Clear()
+				t.playlistList.AddItem("❌ Error loading playlists", err.Error(), 0, nil)
+			})
+			return
+		}
+		
+		url := "https://api.spotify.com/v1/users/" + t.userProfile.Userid + "/playlists"
+		resp, err := client.Get(url)
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.playlistList.Clear()
+				t.playlistList.AddItem("❌ HTTP Error", err.Error(), 0, nil)
+			})
+			return
+		}
+		defer resp.Body.Close()
+		
+		var playlistsResp PlaylistsResponse
+		err = json.NewDecoder(resp.Body).Decode(&playlistsResp)
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.playlistList.Clear()
+				t.playlistList.AddItem("❌ Parse Error", err.Error(), 0, nil)
+			})
+			return
+		}
+		
+		t.playlists = playlistsResp.Items
+		
+		// Update UI on main thread
+		t.app.QueueUpdateDraw(func() {
+			t.playlistList.Clear()
+			
+			if len(t.playlists) == 0 {
+				t.playlistList.AddItem("No playlists found", "", 0, nil)
+				return
+			}
+			
+			for i, playlist := range t.playlists {
+				index := i // Capture loop variable
+				t.playlistList.AddItem(
+					fmt.Sprintf("🎵 %s", playlist.Name),
+					fmt.Sprintf("%s tracks", ""),
+					rune('1'+i%9),
+					func() { t.loadPlaylistTracks(index) },
+				)
+			}
+		})
+	}()
+}
+
+func (t *TUIApp) loadPlaylistTracks(playlistIndex int) {
+	if playlistIndex >= len(t.playlists) {
+		return
+	}
+	
+	playlist := t.playlists[playlistIndex]
+	
+	// Clear and show loading
+	t.trackList.Clear()
+	t.trackList.SetCell(0, 0, tview.NewTableCell("Loading tracks...").SetTextColor(tcell.ColorYellow))
+	
+	// Load tracks in background
+	go func() {
+		client, err := utils.NewSpotifyClient()
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.trackList.Clear()
+				t.trackList.SetCell(0, 0, tview.NewTableCell("❌ Error: "+err.Error()).SetTextColor(errorColor))
+			})
+			return
+		}
+		
+		var allTracks []PlaylistTrack
+		next := playlist.Tracks.Href
+		
+		for next != "" {
+			resp, err := client.Get(next)
+			if err != nil {
+				t.app.QueueUpdateDraw(func() {
+					t.trackList.Clear()
+					t.trackList.SetCell(0, 0, tview.NewTableCell("❌ HTTP Error: "+err.Error()).SetTextColor(errorColor))
+				})
+				return
+			}
+			
+			var tracksResp PlaylistTracksResponse
+			err = json.NewDecoder(resp.Body).Decode(&tracksResp)
+			resp.Body.Close()
+			
+			if err != nil {
+				t.app.QueueUpdateDraw(func() {
+					t.trackList.Clear()
+					t.trackList.SetCell(0, 0, tview.NewTableCell("❌ Parse Error: "+err.Error()).SetTextColor(errorColor))
+				})
+				return
+			}
+			
+			allTracks = append(allTracks, tracksResp.Items...)
+			next = tracksResp.Next
+		}
+		
+		t.currentTracks = allTracks
+		
+		// Update UI on main thread
+		t.app.QueueUpdateDraw(func() {
+			t.trackList.Clear()
+			
+			if len(allTracks) == 0 {
+				t.trackList.SetCell(0, 0, tview.NewTableCell("No tracks found").SetTextColor(tcell.ColorGray))
+				return
+			}
+			
+			// Add header
+			t.trackList.SetCell(0, 0, tview.NewTableCell("#").SetTextColor(selectedColor).SetSelectable(false))
+			t.trackList.SetCell(0, 1, tview.NewTableCell("Track").SetTextColor(selectedColor).SetSelectable(false))
+			t.trackList.SetCell(0, 2, tview.NewTableCell("Artist").SetTextColor(selectedColor).SetSelectable(false))
+			t.trackList.SetCell(0, 3, tview.NewTableCell("Album").SetTextColor(selectedColor).SetSelectable(false))
+			
+			// Add tracks
+			for i, item := range allTracks {
+				row := i + 1
+				
+				t.trackList.SetCell(row, 0, 
+					tview.NewTableCell(fmt.Sprintf("%d", i+1)).SetTextColor(tcell.ColorGray))
+				
+				t.trackList.SetCell(row, 1, 
+					tview.NewTableCell(item.Track.Name).SetTextColor(tcell.ColorWhite))
+				
+				artists := ""
+				for j, artist := range item.Track.Artists {
+					if j > 0 {
+						artists += ", "
+					}
+					artists += artist.Name
+				}
+				t.trackList.SetCell(row, 2, 
+					tview.NewTableCell(artists).SetTextColor(tcell.ColorLightBlue))
+				
+				t.trackList.SetCell(row, 3, 
+					tview.NewTableCell(item.Track.Album.Name).SetTextColor(tcell.ColorGreen))
+			}
+			
+			// Update title with track count
+			t.trackList.SetTitle(fmt.Sprintf(" %s (%d tracks) ", playlist.Name, len(allTracks)))
+		})
+	}()
+}
+
+// TUI command
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Launch the Terminal User Interface",
+	Long:  "Launch GitifyTUI - A beautiful terminal interface for Spotify, inspired by Lazygit",
+	Run: func(cmd *cobra.Command, args []string) {
+		app := NewTUIApp()
+		if err := app.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+func init() {
+	spotfiyCmd.AddCommand(tuiCmd)
+}
