@@ -38,6 +38,7 @@ func getUserInfo() error {
 	if err!=nil{
 		return err
 	}
+	defer resp.Body.Close()
 	
 	if resp.StatusCode == http.StatusUnauthorized {
     	return fmt.Errorf("access token invalid or expired, please login again")
