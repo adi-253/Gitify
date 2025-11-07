@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/adi-253/Gitify/cmd/utils"
@@ -24,6 +25,8 @@ type TUIApp struct {
 	playlistList   *tview.List
 	trackList      *tview.Table
 	profileView    *tview.TextView
+	searchInput    *tview.InputField
+	searchResults  *tview.Table
 	
 	// State
 	currentPanel   string
@@ -31,6 +34,7 @@ type TUIApp struct {
 	userProfile    *Profile
 	playlists      []Playlist
 	currentTracks  []PlaylistTrack
+	searchTracks   []TrackItem
 }
 
 // Colors and styles similar to Lazygit
@@ -128,7 +132,8 @@ func (t *TUIApp) setupSidebar() {
 		}
 		t.sidebar.AddItem("👤 "+username, "User Profile", 'p', t.showProfilePanel)
 		t.sidebar.AddItem("🎵 Playlists", "View your playlists", 'l', t.showPlaylistPanel)
-		t.sidebar.AddItem("🔄 Refresh", "Refresh data", 'r', t.refreshData)
+		t.sidebar.AddItem("🔍 Search", "Search for songs", 's', t.showSearchPanel)
+		t.sidebar.AddItem("� Refresh", "Refresh data", 'r', t.refreshData)
 		t.sidebar.AddItem("🚪 Logout", "Clear login data", 0, t.logout)
 	}
 	
@@ -143,6 +148,22 @@ func (t *TUIApp) setupSidebar() {
 
 func (t *TUIApp) setupKeybindings() {
 	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Don't intercept keys when in search input
+		if t.currentPanel == "search" && t.app.GetFocus() == t.searchInput {
+			switch event.Key() {
+			case tcell.KeyEsc:
+				t.focusSidebar()
+				return nil
+			case tcell.KeyTab:
+				if t.searchResults != nil && t.searchResults.GetRowCount() > 0 {
+					t.currentPanel = "search_results"
+					t.app.SetFocus(t.searchResults)
+				}
+				return nil
+			}
+			return event
+		}
+
 		switch event.Key() {
 		case tcell.KeyEsc:
 			if t.pages.HasPage("help") {
@@ -159,32 +180,40 @@ func (t *TUIApp) setupKeybindings() {
 			return nil
 		}
 		
-		switch event.Rune() {
-		case 'q':
-			if t.currentPanel == "sidebar" {
-				t.quit()
+		// Only process hotkeys when not in search results
+		if t.currentPanel != "search_results" {
+			switch event.Rune() {
+			case 'q':
+				if t.currentPanel == "sidebar" {
+					t.quit()
+					return nil
+				}
+			case 'h':
+				t.showHelp()
+				return nil
+			case 'p':
+				if t.isLoggedIn {
+					t.showProfilePanel()
+				}
+				return nil
+			case 'l':
+				if t.isLoggedIn {
+					t.showPlaylistPanel()
+				} else {
+					t.showLoginPanel()
+				}
+				return nil
+			case 'r':
+				if t.isLoggedIn {
+					t.refreshData()
+				}
+				return nil
+			case 's':
+				if t.isLoggedIn {
+					t.showSearchPanel()
+				}
 				return nil
 			}
-		case 'h':
-			t.showHelp()
-			return nil
-		case 'p':
-			if t.isLoggedIn {
-				t.showProfilePanel()
-			}
-			return nil
-		case 'l':
-			if t.isLoggedIn {
-				t.showPlaylistPanel()
-			} else {
-				t.showLoginPanel()
-			}
-			return nil
-		case 'r':
-			if t.isLoggedIn {
-				t.refreshData()
-			}
-			return nil
 		}
 		
 		return event
@@ -204,6 +233,7 @@ func (t *TUIApp) createHelpModal() {
  Actions:
    l           Login/View playlists  
    p           View profile
+   s           Search for songs
    r           Refresh data
    h           Show this help
    q           Quit application
@@ -211,6 +241,11 @@ func (t *TUIApp) createHelpModal() {
  In Playlists:
    Enter       View playlist tracks
    Esc         Back to playlists
+
+ In Search:
+   Enter       Perform search
+   Tab         Switch to results
+   Esc         Back to navigation
 
 ╰──────────────────────────────╯
 
@@ -245,6 +280,12 @@ func (t *TUIApp) switchFocus() {
 		} else if t.trackList != nil && t.trackList.GetRowCount() > 0 {
 			t.currentPanel = "tracks"
 			t.app.SetFocus(t.trackList)
+		} else if t.searchInput != nil {
+			t.currentPanel = "search"
+			t.app.SetFocus(t.searchInput)
+		} else if t.searchResults != nil && t.searchResults.GetRowCount() > 0 {
+			t.currentPanel = "search_results"
+			t.app.SetFocus(t.searchResults)
 		}
 	case "playlists":
 		if t.trackList != nil && t.trackList.GetRowCount() > 0 {
@@ -255,6 +296,16 @@ func (t *TUIApp) switchFocus() {
 		}
 	case "tracks":
 		t.focusSidebar()
+	case "search":
+		if t.searchResults != nil && t.searchResults.GetRowCount() > 0 {
+			t.currentPanel = "search_results"
+			t.app.SetFocus(t.searchResults)
+		} else {
+			t.focusSidebar()
+		}
+	case "search_results":
+		t.currentPanel = "search"
+		t.app.SetFocus(t.searchInput)
 	default:
 		t.focusSidebar()
 	}
@@ -270,6 +321,10 @@ func (t *TUIApp) updateStatusBar() {
 		text = " Playlists | Enter: view tracks | Esc: back | Tab: switch focus "
 	case "tracks":
 		text = " Tracks | Esc: back | Tab: switch focus "
+	case "search":
+		text = " Search | Enter: search | Tab: switch to results | Esc: back "
+	case "search_results":
+		text = " Search Results | Tab: back to search | Esc: back to navigation "
 	default:
 		text = " GitifyTUI | Press 'h' for help | 'q' to quit "
 	}
@@ -303,12 +358,14 @@ You're successfully logged in to Spotify.
 Choose an option from the sidebar to get started:
 
 🎵 View your playlists
-👤 Check your profile  
+🔍 Search for songs
+� Check your profile  
 🔄 Refresh your data
 ❓ Get help
 
 Navigate with ↑↓ or j/k keys
 Press Enter to select, Tab to switch focus
+Press 's' for quick search access
 `, username)
 	} else {
 		welcomeText = `
@@ -497,6 +554,60 @@ func (t *TUIApp) showPlaylistPanel() {
 	t.updateStatusBar()
 }
 
+func (t *TUIApp) showSearchPanel() {
+	if !t.isLoggedIn {
+		return
+	}
+	
+	// Clear main content
+	t.mainContent.Clear()
+	
+	// Create simple search input field
+	t.searchInput = tview.NewInputField().
+		SetLabel("Search: ").
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite)
+	
+	t.searchInput.SetBorder(true).
+		SetTitle(" Search Songs ")
+	
+	// Create search results table
+	t.searchResults = tview.NewTable().
+		SetBorders(false).
+		SetSeparator('│').
+		SetSelectable(true, false)
+	
+	t.searchResults.SetBorder(true).
+		SetTitle(" Search Results ").
+		SetBorderColor(borderColor)
+	
+	// Set up input field behavior
+	t.searchInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			query := t.searchInput.GetText()
+			if query != "" {
+				t.performSearch(query)
+			}
+		}
+	}).SetChangedFunc(func(text string) {
+		// Optional: Perform live search as user types
+		if len(text) >= 3 {
+			t.performSearch(text)
+		}
+	})
+	
+	// Layout: search input on top, results below
+	contentFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(t.searchInput, 3, 0, true).
+		AddItem(t.searchResults, 0, 1, false)
+	
+	t.mainContent.AddItem(contentFlex, 0, 1, true)
+	
+	t.currentPanel = "search"
+	t.app.SetFocus(t.searchInput)
+	t.updateStatusBar()
+}
+
 func (t *TUIApp) loadPlaylists() {
 	if !t.isLoggedIn || t.userProfile == nil {
 		return
@@ -557,6 +668,99 @@ func (t *TUIApp) loadPlaylists() {
 					func() { t.loadPlaylistTracks(index) },
 				)
 			}
+		})
+	}()
+}
+
+func (t *TUIApp) performSearch(query string) {
+	// Clear and show loading
+	t.searchResults.Clear()
+	t.searchResults.SetCell(0, 0, tview.NewTableCell("Searching...").SetTextColor(tcell.ColorYellow))
+	
+	// Perform search in background
+	go func() {
+		client, err := utils.NewSpotifyClient()
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.searchResults.Clear()
+				t.searchResults.SetCell(0, 0, tview.NewTableCell("❌ Error: "+err.Error()).SetTextColor(errorColor))
+			})
+			return
+		}
+		
+		baseURL, err := url.Parse("https://api.spotify.com/v1/search")
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.searchResults.Clear()
+				t.searchResults.SetCell(0, 0, tview.NewTableCell("❌ Invalid URL").SetTextColor(errorColor))
+			})
+			return
+		}
+		
+		params := url.Values{}
+		params.Add("q", query)
+		params.Add("type", "track")
+		params.Add("limit", "20") // Increased limit for TUI
+		baseURL.RawQuery = params.Encode()
+		
+		resp, err := client.Get(baseURL.String())
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.searchResults.Clear()
+				t.searchResults.SetCell(0, 0, tview.NewTableCell("❌ HTTP Error: "+err.Error()).SetTextColor(errorColor))
+			})
+			return
+		}
+		defer resp.Body.Close()
+		
+		var result SearchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.searchResults.Clear()
+				t.searchResults.SetCell(0, 0, tview.NewTableCell("❌ Parse Error: "+err.Error()).SetTextColor(errorColor))
+			})
+			return
+		}
+		
+		t.searchTracks = result.Tracks.Items
+		
+		// Update UI on main thread
+		t.app.QueueUpdateDraw(func() {
+			t.searchResults.Clear()
+			
+			if len(t.searchTracks) == 0 {
+				t.searchResults.SetCell(0, 0, tview.NewTableCell("No results found for '"+query+"'").SetTextColor(tcell.ColorGray))
+				return
+			}
+			
+			// Add header
+			t.searchResults.SetCell(0, 0, tview.NewTableCell("#").SetTextColor(selectedColor).SetSelectable(false))
+			t.searchResults.SetCell(0, 1, tview.NewTableCell("Track").SetTextColor(selectedColor).SetSelectable(false))
+			t.searchResults.SetCell(0, 2, tview.NewTableCell("Artist").SetTextColor(selectedColor).SetSelectable(false))
+			
+			// Add search results
+			for i, track := range t.searchTracks {
+				row := i + 1
+				
+				t.searchResults.SetCell(row, 0, 
+					tview.NewTableCell(fmt.Sprintf("%d", i+1)).SetTextColor(tcell.ColorGray))
+				
+				t.searchResults.SetCell(row, 1, 
+					tview.NewTableCell(track.Name).SetTextColor(tcell.ColorWhite))
+				
+				artists := ""
+				for j, artist := range track.Artists {
+					if j > 0 {
+						artists += ", "
+					}
+					artists += artist.Name
+				}
+				t.searchResults.SetCell(row, 2, 
+					tview.NewTableCell(artists).SetTextColor(tcell.ColorLightBlue))
+			}
+			
+			// Update title with result count
+			t.searchResults.SetTitle(fmt.Sprintf(" Search Results (%d tracks) ", len(t.searchTracks)))
 		})
 	}()
 }
