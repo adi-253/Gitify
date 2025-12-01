@@ -35,6 +35,12 @@ type TUIApp struct {
 	playlists      []Playlist
 	currentTracks  []PlaylistTrack
 	searchTracks   []TrackItem
+	
+	// Pagination state
+	tracksPerPage     int
+	currentPage       int
+	totalPages        int
+	currentPlaylist   string
 }
 
 // Colors and styles similar to Lazygit
@@ -53,6 +59,9 @@ func NewTUIApp() *TUIApp {
 		app:          tview.NewApplication(),
 		pages:        tview.NewPages(),
 		currentPanel: "sidebar",
+		tracksPerPage: 50, // Default tracks per page
+		currentPage:   0,
+		totalPages:    0,
 	}
 	
 	app.checkLoginStatus()
@@ -180,6 +189,47 @@ func (t *TUIApp) setupKeybindings() {
 			return nil
 		}
 		
+		// Handle pagination in tracks panel (check this first to avoid conflicts)
+		if t.currentPanel == "tracks" {
+			// Handle arrow keys and special keys first
+			switch event.Key() {
+			case tcell.KeyRight, tcell.KeyPgDn:
+				t.nextPage()
+				return nil
+			case tcell.KeyLeft, tcell.KeyPgUp:
+				t.previousPage()
+				return nil
+			case tcell.KeyHome:
+				t.firstPage()
+				return nil
+			case tcell.KeyEnd:
+				t.lastPage()
+				return nil
+			}
+			
+			// Handle character keys
+			switch event.Rune() {
+			case 'n', '.', '>':
+				t.nextPage()
+				return nil
+			case 'b', ',', '<':
+				t.previousPage()
+				return nil
+			case 'g':
+				t.firstPage()
+				return nil
+			case 'G':
+				t.lastPage()
+				return nil
+			case 'h':
+				t.showHelp()
+				return nil
+			case 'q':
+				return event // Let it bubble up to quit if needed
+			}
+			return event
+		}
+		
 		// Only process hotkeys when not in search results
 		if t.currentPanel != "search_results" {
 			switch event.Rune() {
@@ -240,6 +290,14 @@ func (t *TUIApp) createHelpModal() {
 
  In Playlists:
    Enter       View playlist tracks
+   Esc         Back to playlists
+
+ In Tracks (Pagination):
+   →, n, .     Next page
+   ←, b, ,     Previous page  
+   Home, g     First page
+   End, G      Last page
+   PgUp/PgDn   Previous/Next page
    Esc         Back to playlists
 
  In Search:
@@ -320,7 +378,11 @@ func (t *TUIApp) updateStatusBar() {
 	case "playlists": 
 		text = " Playlists | Enter: view tracks | Esc: back | Tab: switch focus "
 	case "tracks":
-		text = " Tracks | Esc: back | Tab: switch focus "
+		if t.totalPages > 1 {
+			text = fmt.Sprintf(" Tracks (Page %d/%d) | ←→: navigate | n/b: next/back | g/G: first/last | h: help | Esc: back ", t.currentPage+1, t.totalPages)
+		} else {
+			text = " Tracks | h: help | Esc: back | Tab: switch focus "
+		}
 	case "search":
 		text = " Search | Enter: search | Tab: switch to results | Esc: back "
 	case "search_results":
@@ -536,7 +598,9 @@ func (t *TUIApp) showPlaylistPanel() {
 	// Create tracks table
 	t.trackList = tview.NewTable().
 		SetBorders(false).
-		SetSeparator('│')
+		SetSeparator('│').
+		SetSelectable(true, false).
+		SetFixed(1, 0) // Fix header row
 	
 	t.trackList.SetBorder(true).
 		SetTitle(" Tracks ").
@@ -817,50 +881,155 @@ func (t *TUIApp) loadPlaylistTracks(playlistIndex int) {
 		}
 		
 		t.currentTracks = allTracks
+		t.currentPlaylist = playlist.Name
 		
 		// Update UI on main thread
 		t.app.QueueUpdateDraw(func() {
-			t.trackList.Clear()
+			// Reset pagination and calculate pages
+			t.currentPage = 0
+			t.calculatePagination()
 			
-			if len(allTracks) == 0 {
-				t.trackList.SetCell(0, 0, tview.NewTableCell("No tracks found").SetTextColor(tcell.ColorGray))
-				return
+			// Display first page
+			t.displayCurrentTracksPage()
+			
+			// Update title with track count and pagination info
+			if t.totalPages > 1 {
+				t.trackList.SetTitle(fmt.Sprintf(" %s (%d tracks, %d pages) ", playlist.Name, len(allTracks), t.totalPages))
+			} else {
+				t.trackList.SetTitle(fmt.Sprintf(" %s (%d tracks) ", playlist.Name, len(allTracks)))
 			}
 			
-			// Add header
-			t.trackList.SetCell(0, 0, tview.NewTableCell("#").SetTextColor(selectedColor).SetSelectable(false))
-			t.trackList.SetCell(0, 1, tview.NewTableCell("Track").SetTextColor(selectedColor).SetSelectable(false))
-			t.trackList.SetCell(0, 2, tview.NewTableCell("Artist").SetTextColor(selectedColor).SetSelectable(false))
-			t.trackList.SetCell(0, 3, tview.NewTableCell("Album").SetTextColor(selectedColor).SetSelectable(false))
-			
-			// Add tracks
-			for i, item := range allTracks {
-				row := i + 1
-				
-				t.trackList.SetCell(row, 0, 
-					tview.NewTableCell(fmt.Sprintf("%d", i+1)).SetTextColor(tcell.ColorGray))
-				
-				t.trackList.SetCell(row, 1, 
-					tview.NewTableCell(item.Track.Name).SetTextColor(tcell.ColorWhite))
-				
-				artists := ""
-				for j, artist := range item.Track.Artists {
-					if j > 0 {
-						artists += ", "
-					}
-					artists += artist.Name
-				}
-				t.trackList.SetCell(row, 2, 
-					tview.NewTableCell(artists).SetTextColor(tcell.ColorLightBlue))
-				
-				// t.trackList.SetCell(row, 3, 
-				// 	tview.NewTableCell(item.Track.Album.Name).SetTextColor(tcell.ColorGreen))
+			// Auto-switch focus to tracks panel when tracks are loaded
+			if len(allTracks) > 0 {
+				t.currentPanel = "tracks"
+				t.app.SetFocus(t.trackList)
 			}
 			
-			// Update title with track count
-			t.trackList.SetTitle(fmt.Sprintf(" %s (%d tracks) ", playlist.Name, len(allTracks)))
+			// Update status bar to show pagination controls
+			t.updateStatusBar()
 		})
 	}()
+}
+
+// Pagination methods
+func (t *TUIApp) calculatePagination() {
+	if len(t.currentTracks) == 0 {
+		t.totalPages = 0
+		t.currentPage = 0
+		return
+	}
+	
+	t.totalPages = (len(t.currentTracks) + t.tracksPerPage - 1) / t.tracksPerPage
+	if t.currentPage >= t.totalPages {
+		t.currentPage = t.totalPages - 1
+	}
+	if t.currentPage < 0 {
+		t.currentPage = 0
+	}
+}
+
+func (t *TUIApp) nextPage() {
+	if t.currentPage < t.totalPages-1 {
+		t.currentPage++
+		t.displayCurrentTracksPage()
+		t.updateStatusBar()
+		// Update title to reflect current page
+		if t.currentPlaylist != "" && t.totalPages > 1 {
+			t.trackList.SetTitle(fmt.Sprintf(" %s (Page %d/%d) ", t.currentPlaylist, t.currentPage+1, t.totalPages))
+		}
+	}
+}
+
+func (t *TUIApp) previousPage() {
+	if t.currentPage > 0 {
+		t.currentPage--
+		t.displayCurrentTracksPage()
+		t.updateStatusBar()
+		// Update title to reflect current page
+		if t.currentPlaylist != "" && t.totalPages > 1 {
+			t.trackList.SetTitle(fmt.Sprintf(" %s (Page %d/%d) ", t.currentPlaylist, t.currentPage+1, t.totalPages))
+		}
+	}
+}
+
+func (t *TUIApp) firstPage() {
+	if t.totalPages > 0 {
+		t.currentPage = 0
+		t.displayCurrentTracksPage()
+		t.updateStatusBar()
+		// Update title to reflect current page
+		if t.currentPlaylist != "" && t.totalPages > 1 {
+			t.trackList.SetTitle(fmt.Sprintf(" %s (Page %d/%d) ", t.currentPlaylist, t.currentPage+1, t.totalPages))
+		}
+	}
+}
+
+func (t *TUIApp) lastPage() {
+	if t.totalPages > 0 {
+		t.currentPage = t.totalPages - 1
+		t.displayCurrentTracksPage()
+		t.updateStatusBar()
+		// Update title to reflect current page
+		if t.currentPlaylist != "" && t.totalPages > 1 {
+			t.trackList.SetTitle(fmt.Sprintf(" %s (Page %d/%d) ", t.currentPlaylist, t.currentPage+1, t.totalPages))
+		}
+	}
+}
+
+func (t *TUIApp) displayCurrentTracksPage() {
+	t.trackList.Clear()
+	
+	if len(t.currentTracks) == 0 {
+		t.trackList.SetCell(0, 0, tview.NewTableCell("No tracks found").SetTextColor(tcell.ColorGray))
+		return
+	}
+	
+	// Ensure table is selectable
+	t.trackList.SetSelectable(true, false)
+	
+	// Add header
+	t.trackList.SetCell(0, 0, tview.NewTableCell("#").SetTextColor(selectedColor).SetSelectable(false))
+	t.trackList.SetCell(0, 1, tview.NewTableCell("Track").SetTextColor(selectedColor).SetSelectable(false))
+	t.trackList.SetCell(0, 2, tview.NewTableCell("Artist").SetTextColor(selectedColor).SetSelectable(false))
+	t.trackList.SetCell(0, 3, tview.NewTableCell("Album").SetTextColor(selectedColor).SetSelectable(false))
+	
+	// Calculate start and end indices for current page
+	start := t.currentPage * t.tracksPerPage
+	end := start + t.tracksPerPage
+	if end > len(t.currentTracks) {
+		end = len(t.currentTracks)
+	}
+	
+	// Add tracks for current page
+	for i := start; i < end; i++ {
+		item := t.currentTracks[i]
+		row := i - start + 1 // Row in table (1-indexed, accounting for header)
+		
+		t.trackList.SetCell(row, 0, 
+			tview.NewTableCell(fmt.Sprintf("%d", i+1)).SetTextColor(tcell.ColorGray))
+		
+		t.trackList.SetCell(row, 1, 
+			tview.NewTableCell(item.Track.Name).SetTextColor(tcell.ColorWhite))
+		
+		artists := ""
+		for j, artist := range item.Track.Artists {
+			if j > 0 {
+				artists += ", "
+			}
+			artists += artist.Name
+		}
+		t.trackList.SetCell(row, 2, 
+			tview.NewTableCell(artists).SetTextColor(tcell.ColorLightBlue))
+		
+		// Note: Album info would need to be added to Track struct if needed
+		// t.trackList.SetCell(row, 3, 
+		//     tview.NewTableCell(item.Track.Album.Name).SetTextColor(tcell.ColorGreen))
+	}
+	
+	// Set selection to first track if we have tracks
+	if end > start {
+		t.trackList.Select(1, 0) // Select first track (row 1, after header)
+	}
 }
 
 // TUI command

@@ -40,8 +40,8 @@ func (s *SpotifyClient) makeRequest(method, url string, body io.Reader) (*http.R
 	}
 
 	req.Header.Set("Authorization", "Bearer "+s.Token.AccessToken)
-	if method == http.MethodPost {
-		req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost || method == http.MethodPut {
+    	req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := s.HTTPClient.Do(req)
@@ -87,3 +87,8 @@ func (s *SpotifyClient) Get(url string) (*http.Response, error) {
 func (s *SpotifyClient) Post(url string, body io.Reader) (*http.Response, error) {
 	return s.makeRequest(http.MethodPost, url, body)
 }
+
+func (s *SpotifyClient) Put(url string, body io.Reader) (*http.Response, error) {
+    return s.makeRequest(http.MethodPut, url, body)
+}
+

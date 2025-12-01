@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/adi-253/Gitify/cmd/utils"
 	"github.com/spf13/cobra"
@@ -24,6 +25,7 @@ type Playlist struct {
 	Tracks struct {
 		Href string `json:"href"`
 	} `json:"tracks"`
+	Uri string `json:"uri"`
 }
 
 type PlaylistTracksResponse struct {
@@ -106,6 +108,31 @@ var playlistCmd = &cobra.Command{
 
 		for i, t := range tracks {
 			fmt.Printf("%d. %s — %s\n", i+1, t.Name, joinArtists(t.Artists))
+		}
+
+		// Add playback options
+		fmt.Print("\n🎵 Play Options:\n")
+		fmt.Println("[P] Play entire playlist")
+		fmt.Println("[Q] Quit")
+		fmt.Print("\nChoose an option: ")
+		
+		var playChoice string
+		fmt.Scan(&playChoice)
+		
+		switch strings.ToUpper(playChoice) {
+		case "P":
+			// Play entire playlist using context URI (format: spotify:playlist:ID)
+			playlistURI := selected.Uri
+			if playlistURI == "" {
+				playlistURI = "spotify:playlist:" + selected.ID
+			}
+
+			fmt.Printf("\n🎶 Playing playlist: %s\n", selected.Name)
+			StartMusic(&playlistURI, nil)
+		case "Q":
+			fmt.Println("Goodbye! 👋")
+		default:
+			fmt.Println("Invalid option.")
 		}
 	},
 }

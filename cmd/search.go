@@ -23,7 +23,7 @@ type TrackItem struct {
 	ExternalURLs struct {
 		Spotify string `json:"spotify"`
 	} `json:"external_urls"`
-	ID string `json:"id"` // Used for future play implementation
+	URI string `json:"uri"` // Used for playback
 }
 
 type ArtistResp struct {
@@ -90,6 +90,43 @@ var searchcmd = &cobra.Command{
 			fmt.Printf("%d. %s — %s\n", i+1, track.Name, strings.Join(artistNames, ", "))
 			fmt.Printf("   %s\n\n", track.ExternalURLs.Spotify)
 		}
+
+		// Add playback options
+		fmt.Print("\nPlay Options:\n")
+		fmt.Println("Play track by number")
+		fmt.Println("[Q] Quit")
+		fmt.Print("\nChoose a track number to play (or Q to quit): ")
+		
+		var playChoice string
+		fmt.Scan(&playChoice)
+		
+		if strings.ToUpper(playChoice) == "Q" {
+			fmt.Println("Goodbye!")
+			return
+		}
+		
+		// Try to parse as track number
+		var trackNum int
+		if _, err := fmt.Sscanf(playChoice, "%d", &trackNum); err != nil {
+			fmt.Println("Invalid input. Please enter a number or Q.")
+			return
+		}
+		
+		if trackNum < 1 || trackNum > len(result.Tracks.Items) {
+			fmt.Printf("Invalid track number. Please enter 1-%d.\n", len(result.Tracks.Items))
+			return
+		}
+		
+		// Play selected track
+		selectedTrack := result.Tracks.Items[trackNum-1]
+		trackURIs := []string{selectedTrack.URI}
+		artistNames := make([]string, len(selectedTrack.Artists))
+		for j, artist := range selectedTrack.Artists {
+			artistNames[j] = artist.Name
+		}
+		
+		fmt.Printf("\n🎶 Playing: %s — %s\n", selectedTrack.Name, strings.Join(artistNames, ", "))
+		StartMusic(nil, &trackURIs)
 	},
 }
 

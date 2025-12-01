@@ -139,7 +139,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 	
-	scope := "user-read-private user-read-email user-library-read playlist-read-private"
+	scope := "user-read-private user-read-email user-library-read playlist-read-private user-read-playback-state user-modify-playback-state streaming"
 	authURL, _ := url.Parse("https://accounts.spotify.com/authorize")
 	params := url.Values{}
 	params.Add("client_id", Client_ID)

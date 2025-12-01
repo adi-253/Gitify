@@ -1,0 +1,208 @@
+// this will be a helper function rather than a cli command because we will integrate with search and playlist
+package cmd
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
+	"github.com/adi-253/Gitify/cmd/utils"
+	"github.com/spf13/cobra"
+)
+
+type PlaybackRequest struct {
+    ContextURI *string        `json:"context_uri,omitempty"`
+    Uris       *[]string      `json:"uris,omitempty"`
+    Offset     *PlaybackOffset `json:"offset,omitempty"`
+    PositionMS *int           `json:"position_ms,omitempty"`
+}
+
+type PlaybackOffset struct {
+    Position *int    `json:"position,omitempty"`
+    URI      *string `json:"uri,omitempty"`
+}
+
+func StartMusic(contextURI *string, uris *[]string) {
+    req := PlaybackRequest{
+        ContextURI: contextURI,
+        Uris:       uris,
+        Offset:     nil,
+        PositionMS: nil,
+    }
+
+	
+    buf := new(bytes.Buffer)
+    json.NewEncoder(buf).Encode(req)
+
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        fmt.Printf("Error creating Spotify client: %v\n", err)
+        return
+    }
+    
+    resp, err := client.Put("https://api.spotify.com/v1/me/player/play", buf)
+    if err != nil {
+        fmt.Printf("Error starting playback: %v\n", err)
+        return
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode == 404 {
+        fmt.Println("No active device found. Please:")
+        fmt.Println("   1. Open Spotify app on your phone/computer")
+        fmt.Println("   2. Start playing any song briefly")
+        fmt.Println("   3. Then try again")
+        return
+    }
+    
+    if resp.StatusCode != 204 {
+        fmt.Printf("Playback failed with status: %d\n", resp.StatusCode)
+        return
+    }
+    
+    fmt.Println("Playback started successfully!")
+}
+
+func PausePlayback() {
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        fmt.Printf("Error creating Spotify client: %v\n", err)
+        return
+    }
+
+    resp, err := client.Put("https://api.spotify.com/v1/me/player/pause", nil)
+    if err != nil {
+        fmt.Printf("Error pausing playback: %v\n", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    switch resp.StatusCode {
+    case 200:
+        fmt.Println("Playback paused")
+    case 404:
+        fmt.Println("No active device found")
+    case 403:
+        fmt.Println("Playback control requires Spotify Premium")
+    default:
+        fmt.Printf("Failed to pause with status: %d\n", resp.StatusCode)
+    }
+}
+
+func ResumePlayback() {
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        fmt.Printf("Error creating Spotify client: %v\n", err)
+        return
+    }
+
+    resp, err := client.Put("https://api.spotify.com/v1/me/player/play", nil)
+    if err != nil {
+        fmt.Printf("Error resuming playback: %v\n", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    switch resp.StatusCode {
+    case 200:
+        fmt.Println("Playback resumed")
+    case 404:
+        fmt.Println("No active device found")
+    case 403:
+        fmt.Println("Playback control requires Spotify Premium")
+    default:
+        fmt.Printf("Failed to resume with status: %d\n", resp.StatusCode)
+    }
+}
+
+func NextTrack() {
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        fmt.Printf("Error creating Spotify client: %v\n", err)
+        return
+    }
+
+    resp, err := client.Post("https://api.spotify.com/v1/me/player/next", nil)
+    if err != nil {
+        fmt.Printf("Error skipping track: %v\n", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    switch resp.StatusCode {
+    case 200:
+        fmt.Println("Skipped to next track")
+    case 404:
+        fmt.Println("No active device found")
+    case 403:
+        fmt.Println("Playback control requires Spotify Premium")
+    default:
+        fmt.Printf("Failed to skip with status: %d\n", resp.StatusCode)
+    }
+}
+
+func PreviousTrack() {
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        fmt.Printf("Error creating Spotify client: %v\n", err)
+        return
+    }
+
+    resp, err := client.Post("https://api.spotify.com/v1/me/player/previous", nil)
+    if err != nil {
+        fmt.Printf("Error going to previous track: %v\n", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    switch resp.StatusCode {
+    case 200:
+        fmt.Println("Previous track")
+    case 404:
+        fmt.Println("No active device found")
+    case 403:
+        fmt.Println("Playback control requires Spotify Premium")
+    default:
+        fmt.Printf("Failed to go to previous track with status: %d\n", resp.StatusCode)
+    }
+}
+
+// CLI Commands
+var pauseCmd = &cobra.Command{
+	Use:   "pause",
+	Short: "Pause current playback",
+	Run: func(cmd *cobra.Command, args []string) {
+		PausePlayback()
+	},
+}
+
+var resumeCmd = &cobra.Command{
+	Use:   "resume",
+	Short: "Resume current playback", 
+	Run: func(cmd *cobra.Command, args []string) {
+		ResumePlayback()
+	},
+}
+
+var nextCmd = &cobra.Command{
+	Use:   "next",
+	Short: "Skip to next track",
+	Run: func(cmd *cobra.Command, args []string) {
+		NextTrack()
+	},
+}
+
+var prevCmd = &cobra.Command{
+	Use:   "prev",
+	Short: "Go to previous track",
+	Run: func(cmd *cobra.Command, args []string) {
+		PreviousTrack()
+	},
+}
+
+func init() {
+	spotifyCmd.AddCommand(pauseCmd)
+	spotifyCmd.AddCommand(resumeCmd)
+	spotifyCmd.AddCommand(nextCmd)
+	spotifyCmd.AddCommand(prevCmd)
+}
