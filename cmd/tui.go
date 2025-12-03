@@ -35,17 +35,16 @@ var (
 // ---------- Keymap ----------
 
 type keyMap struct {
-	Quit     key.Binding
-	Help     key.Binding
-	Toggle   key.Binding
-	NextPane key.Binding
-	PrevPane key.Binding
-	Search   key.Binding
+	Quit      key.Binding
+	Help      key.Binding
+	NextPane  key.Binding
+	PrevPane  key.Binding
+	Search    key.Binding
 	Playlists key.Binding
-	Play     key.Binding
-	Pause    key.Binding
-	Next     key.Binding
-	Prev     key.Binding
+	Play      key.Binding
+	Pause     key.Binding
+	Next      key.Binding
+	Prev      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -57,10 +56,6 @@ func defaultKeyMap() keyMap {
 		Help: key.NewBinding(
 			key.WithKeys("h", "?"),
 			key.WithHelp("h/?", "toggle help"),
-		),
-		Toggle: key.NewBinding(
-			key.WithKeys("tab"),
-			key.WithHelp("tab", "next section"),
 		),
 		NextPane: key.NewBinding(
 			key.WithKeys("]"),
@@ -446,9 +441,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch {
-		case key.Matches(msg, m.keys.Toggle):
-			m.cycleFocus()
-			return m, nil
 		case key.Matches(msg, m.keys.Pause):
 			if m.isPlaying {
 				go PausePlayback()
