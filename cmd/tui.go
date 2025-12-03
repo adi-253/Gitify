@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/adi-253/Gitify/cmd/utils"
 	"github.com/gdamore/tcell/v2"
@@ -41,6 +42,10 @@ type TUIApp struct {
 	currentPage       int
 	totalPages        int
 	currentPlaylist   string
+	
+	// Playback state
+	isPlaying         bool
+	currentTrackURI   string
 }
 
 // Colors and styles similar to Lazygit
@@ -109,7 +114,7 @@ func (t *TUIApp) setupUI() {
 	
 	// Create main layout
 	mainFlex := tview.NewFlex().
-		AddItem(t.sidebar, 25, 0, true).
+		AddItem(t.sidebar, 30, 0, true).
 		AddItem(t.mainContent, 0, 1, false)
 	
 	// Root layout with status bar
@@ -132,26 +137,30 @@ func (t *TUIApp) setupSidebar() {
 	
 	// Add sidebar items based on login status
 	if !t.isLoggedIn {
-		t.sidebar.AddItem("🔐 Login", "Login to Spotify", 'l', t.showLoginPanel)
-		t.sidebar.AddItem("❌ Not Logged In", "Please login first", 0, nil)
+		t.sidebar.AddItem("L Login", "Login to Spotify", 'l', t.showLoginPanel)
+		t.sidebar.AddItem("! Not Logged In", "Please login first", 0, nil)
 	} else {
-		username := "User"
+		profileName := "P Profile"
 		if t.userProfile != nil {
-			username = t.userProfile.Username
+			profileName = "P " + t.userProfile.Username
 		}
-		t.sidebar.AddItem("👤 "+username, "User Profile", 'p', t.showProfilePanel)
-		t.sidebar.AddItem("🎵 Playlists", "View your playlists", 'l', t.showPlaylistPanel)
-		t.sidebar.AddItem("🔍 Search", "Search for songs", 's', t.showSearchPanel)
-		t.sidebar.AddItem("� Refresh", "Refresh data", 'r', t.refreshData)
-		t.sidebar.AddItem("🚪 Logout", "Clear login data", 0, t.logout)
+		t.sidebar.AddItem(profileName, "User Profile", 'p', t.showProfilePanel)
+		t.sidebar.AddItem("L Playlists", "View playlists", 'l', t.showPlaylistPanel)
+		t.sidebar.AddItem("S Search", "Search songs", 's', t.showSearchPanel)
+		t.sidebar.AddItem("- Pause", "Pause", 0, func() { go t.pausePlayback() })
+		t.sidebar.AddItem("+ Resume", "Resume", 0, func() { go t.resumePlayback() })
+		t.sidebar.AddItem("> Next", "Next track", 0, func() { go t.nextTrack() })
+		t.sidebar.AddItem("< Prev", "Previous track", 0, func() { go t.previousTrack() })
+		t.sidebar.AddItem("R Refresh", "Refresh data", 'r', t.refreshData)
+		t.sidebar.AddItem("X Logout", "Logout", 0, t.logout)
 	}
 	
-	t.sidebar.AddItem("❓ Help", "Show help", 'h', t.showHelp)
-	t.sidebar.AddItem("🚪 Quit", "Exit application", 'q', t.quit)
+	t.sidebar.AddItem("H Help", "Show help", 'h', t.showHelp)
+	t.sidebar.AddItem("Q Quit", "Exit", 'q', t.quit)
 	
 	// Set border and title
 	t.sidebar.SetBorder(true).
-		SetTitle(" Navigation ").
+		SetTitle(" Menu ").
 		SetBorderColor(borderColor)
 }
 
@@ -185,7 +194,10 @@ func (t *TUIApp) setupKeybindings() {
 			t.focusSidebar()
 			return nil
 		case tcell.KeyTab:
-			t.switchFocus()
+			// Only allow Tab in specific contexts to avoid interfering with list navigation
+			if t.currentPanel == "sidebar" || t.currentPanel == "search" {
+				t.switchFocus()
+			}
 			return nil
 		}
 		
@@ -193,6 +205,14 @@ func (t *TUIApp) setupKeybindings() {
 		if t.currentPanel == "tracks" {
 			// Handle arrow keys and special keys first
 			switch event.Key() {
+			case tcell.KeyEnter:
+				t.playSelectedTrack()
+				return nil
+			case tcell.KeyRune:
+				if event.Rune() == ' ' {
+					t.togglePlayback()
+					return nil
+				}
 			case tcell.KeyRight, tcell.KeyPgDn:
 				t.nextPage()
 				return nil
@@ -227,7 +247,33 @@ func (t *TUIApp) setupKeybindings() {
 			case 'q':
 				return event // Let it bubble up to quit if needed
 			}
+			// Let tview handle up/down navigation and other keys
 			return event
+		}
+		
+		// Handle playlist panel
+		if t.currentPanel == "playlists" {
+			switch event.Key() {
+			case tcell.KeyEnter:
+				// Let tview handle the selection (calls the selected function)
+				return event
+			}
+			return event // Let tview handle up/down navigation
+		}
+		
+		// Handle playback controls in search results
+		if t.currentPanel == "search_results" {
+			switch event.Key() {
+			case tcell.KeyEnter:
+				t.playSelectedSearchTrack()
+				return nil
+			case tcell.KeyRune:
+				if event.Rune() == ' ' {
+					t.togglePlayback()
+					return nil
+				}
+			}
+			return event // Let tview handle other keys (up/down navigation)
 		}
 		
 		// Only process hotkeys when not in search results
@@ -298,12 +344,19 @@ func (t *TUIApp) createHelpModal() {
    Home, g     First page
    End, G      Last page
    PgUp/PgDn   Previous/Next page
+   Enter       Play selected track
+   Space       Play/Pause
    Esc         Back to playlists
 
  In Search:
    Enter       Perform search
    Tab         Switch to results
    Esc         Back to navigation
+   
+ In Search Results:
+   Enter       Play selected track
+   Space       Play/Pause
+   Tab         Back to search
 
 ╰──────────────────────────────╯
 
@@ -376,17 +429,25 @@ func (t *TUIApp) updateStatusBar() {
 	case "sidebar":
 		text = " Navigation | Tab: switch focus | Enter: select | h: help | q: quit "
 	case "playlists": 
-		text = " Playlists | Enter: view tracks | Esc: back | Tab: switch focus "
+		text = " Playlists | Enter: view tracks | ↑↓: navigate | Esc: back "
 	case "tracks":
+		playStatus := ""
+		if t.isPlaying {
+			playStatus = " | ♪ Playing"
+		}
 		if t.totalPages > 1 {
-			text = fmt.Sprintf(" Tracks (Page %d/%d) | ←→: navigate | n/b: next/back | g/G: first/last | h: help | Esc: back ", t.currentPage+1, t.totalPages)
+			text = fmt.Sprintf(" Tracks (Page %d/%d) | Enter: play | Space: pause/play | ←→: navigate | n/b: next/back | g/G: first/last%s | Esc: back ", t.currentPage+1, t.totalPages, playStatus)
 		} else {
-			text = " Tracks | h: help | Esc: back | Tab: switch focus "
+			text = fmt.Sprintf(" Tracks | Enter: play | Space: pause/play%s | Esc: back ", playStatus)
 		}
 	case "search":
 		text = " Search | Enter: search | Tab: switch to results | Esc: back "
 	case "search_results":
-		text = " Search Results | Tab: back to search | Esc: back to navigation "
+		playStatus := ""
+		if t.isPlaying {
+			playStatus = " | ♪ Playing"
+		}
+		text = fmt.Sprintf(" Search Results | Enter: play | Space: pause/play | ↑↓: navigate%s | Esc: back ", playStatus)
 	default:
 		text = " GitifyTUI | Press 'h' for help | 'q' to quit "
 	}
@@ -421,12 +482,14 @@ Choose an option from the sidebar to get started:
 
 🎵 View your playlists
 🔍 Search for songs
-� Check your profile  
+👤 Check your profile
+⏯️  Control playback  
 🔄 Refresh your data
 ❓ Get help
 
 Navigate with ↑↓ or j/k keys
-Press Enter to select, Tab to switch focus
+Press Enter to play tracks or select items
+Use Space to pause/resume playback
 Press 's' for quick search access
 `, username)
 	} else {
@@ -825,6 +888,13 @@ func (t *TUIApp) performSearch(query string) {
 			
 			// Update title with result count
 			t.searchResults.SetTitle(fmt.Sprintf(" Search Results (%d tracks) ", len(t.searchTracks)))
+			
+			// Auto-focus on search results after search
+			if len(t.searchTracks) > 0 {
+				t.currentPanel = "search_results"
+				t.app.SetFocus(t.searchResults)
+				t.updateStatusBar()
+			}
 		})
 	}()
 }
@@ -1030,6 +1100,179 @@ func (t *TUIApp) displayCurrentTracksPage() {
 	if end > start {
 		t.trackList.Select(1, 0) // Select first track (row 1, after header)
 	}
+}
+
+// Playback methods
+func (t *TUIApp) playSelectedTrack() {
+	if len(t.currentTracks) == 0 {
+		return
+	}
+	
+	row, _ := t.trackList.GetSelection()
+	if row <= 0 { // Header row or no selection
+		return
+	}
+	
+	// Calculate actual track index based on current page and selection
+	start := t.currentPage * t.tracksPerPage
+	trackIndex := start + row - 1 // -1 because row 0 is header
+	
+	if trackIndex >= len(t.currentTracks) {
+		return
+	}
+	
+	track := t.currentTracks[trackIndex]
+	if track.Track.URI == "" {
+		t.statusBar.SetText(" Error: Track URI not available ")
+		return
+	}
+	
+	// Use playlist context if available, otherwise individual track
+	if t.currentPlaylist != "" {
+		// Find the playlist URI
+		var playlistURI string
+		for _, playlist := range t.playlists {
+			if playlist.Name == t.currentPlaylist {
+				playlistURI = playlist.Uri
+				break
+			}
+		}
+		
+		if playlistURI != "" {
+			// Play from playlist context with offset to selected track
+			go func() {
+				StartMusic(&playlistURI, nil)
+				t.app.QueueUpdateDraw(func() {
+					t.isPlaying = true
+					t.currentTrackURI = track.Track.URI
+					// Update status will show playing indicator
+					t.updateStatusBar()
+				})
+			}()
+		} else {
+			// Fallback to individual track
+			t.playIndividualTrack(track.Track)
+		}
+	} else {
+		// Play individual track
+		t.playIndividualTrack(track.Track)
+	}
+}
+
+func (t *TUIApp) playSelectedSearchTrack() {
+	if len(t.searchTracks) == 0 {
+		return
+	}
+	
+	row, _ := t.searchResults.GetSelection()
+	if row <= 0 { // Header row or no selection
+		return
+	}
+	
+	trackIndex := row - 1 // -1 because row 0 is header
+	if trackIndex >= len(t.searchTracks) {
+		return
+	}
+	
+	track := t.searchTracks[trackIndex]
+	if track.URI == "" {
+		t.statusBar.SetText(" Error: Track URI not available ")
+		return
+	}
+	
+	// Play individual track from search results
+	uris := []string{track.URI}
+	go func() {
+		StartMusic(nil, &uris)
+		t.app.QueueUpdateDraw(func() {
+			t.isPlaying = true
+			t.currentTrackURI = track.URI
+			// Update status will show playing indicator
+			t.updateStatusBar()
+		})
+	}()
+}
+
+func (t *TUIApp) playIndividualTrack(track Track) {
+	uris := []string{track.URI}
+	go func() {
+		StartMusic(nil, &uris)
+		t.app.QueueUpdateDraw(func() {
+			t.isPlaying = true
+			t.currentTrackURI = track.URI
+			// Update status will show playing indicator
+			t.updateStatusBar()
+		})
+	}()
+}
+
+func (t *TUIApp) togglePlayback() {
+	if t.isPlaying {
+		go func() {
+			PausePlayback()
+			t.app.QueueUpdateDraw(func() {
+				t.isPlaying = false
+				// Status bar will show paused state
+				t.updateStatusBar()
+			})
+		}()
+	} else {
+		go func() {
+			ResumePlayback()
+			t.app.QueueUpdateDraw(func() {
+				t.isPlaying = true
+				// Status bar will show playing state
+				t.updateStatusBar()
+			})
+		}()
+	}
+}
+
+func (t *TUIApp) getArtistNames(artists []Artist) string {
+	var names []string
+	for _, artist := range artists {
+		names = append(names, artist.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
+func (t *TUIApp) getSearchArtistNames(artists []ArtistResp) string {
+	var names []string
+	for _, artist := range artists {
+		names = append(names, artist.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
+func (t *TUIApp) showMessage(message string, color tcell.Color) {
+	// Just update status bar to avoid any UI corruption
+	t.statusBar.SetText(fmt.Sprintf(" %s ", message))
+	t.statusBar.SetBackgroundColor(color)
+}
+
+// Playback wrapper methods for sidebar
+func (t *TUIApp) pausePlayback() {
+	PausePlayback()
+	t.app.QueueUpdateDraw(func() {
+		t.isPlaying = false
+		t.updateStatusBar()
+	})
+}
+
+func (t *TUIApp) resumePlayback() {
+	ResumePlayback()
+	t.app.QueueUpdateDraw(func() {
+		t.isPlaying = true
+		t.updateStatusBar()
+	})
+}
+
+func (t *TUIApp) nextTrack() {
+	NextTrack()
+}
+
+func (t *TUIApp) previousTrack() {
+	PreviousTrack()
 }
 
 // TUI command
