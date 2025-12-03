@@ -22,13 +22,9 @@ import (
 
 var (
 	primaryColor  = lipgloss.Color("#7DF9FF") // neon cyan
-	accentColor   = lipgloss.Color("#F5A623") // warm accent
 	bgColor       = lipgloss.Color("#050608")
 	borderFg      = lipgloss.Color("#3C3F51")
 	dimColor      = lipgloss.Color("#7B7D8A")
-	errorColor    = lipgloss.Color("#FF5C57")
-	successColor  = lipgloss.Color("#5AF78E")
-	warningColor  = lipgloss.Color("#FFBD2E")
 	playingColor  = lipgloss.Color("#9AEDFE")
 	sectionHeader = lipgloss.NewStyle().Foreground(primaryColor).Bold(true)
 	titleStyle    = lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Padding(0, 1)
