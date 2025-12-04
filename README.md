@@ -34,7 +34,16 @@ A terminal-first Spotify CLI/TUI powered by Bubble Tea. Gitify manages login, pl
   go run main.go spotify tui
   ```
 
-- Inspect playlists, playback, search, and profile via the CLI commands (e.g., `spotify playlist`, `spotify search <song>`).
+- Use the CLI when you do not want the TUI:
+
+  ```bash
+  go run main.go spotify playlist
+  go run main.go spotify search "Song Title"
+  go run main.go spotify me
+  go run main.go spotify pause|resume|next|prev
+  ```
+
+- Spotify Premium is required for playback control and streaming endpoints.
 
 ## Notes
 
