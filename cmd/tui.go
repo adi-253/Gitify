@@ -660,7 +660,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		if key.Matches(msg, m.keys.Search) && m.focus != focusSearch {
+		// Tab to cycle focus between panels (works everywhere including search)
+		if msg.Type == tea.KeyTab {
+			m.cycleFocus()
+			// Blur search input when leaving search focus
+			if m.focus != focusSearch {
+				m.searchInput.Blur()
+			} else {
+				m.searchInput.Focus()
+			}
+			return m, nil
+		}
+
+		// When typing in the search box, let the text input handle all keys
+		if m.focus == focusSearch {
+			break
+		}
+
+		if key.Matches(msg, m.keys.Search) {
 			m.focus = focusSearch
 			m.searchInput.Focus()
 			return m, nil
@@ -673,12 +690,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.focus = focusPlaylists
 			return m, nil
-		}
-
-		// When typing in the search box, don't steal normal characters for
-		// playback/navigation shortcuts – let the text input handle them.
-		if m.focus == focusSearch {
-			break
 		}
 
 		switch {
@@ -733,11 +744,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case focusSearch:
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
-		if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
-			q := strings.TrimSpace(m.searchInput.Value())
-			if q != "" {
-				m.status = "🔍 Searching…"
-				cmds = append(cmds, searchCmd(q))
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.Type == tea.KeyEnter {
+				q := strings.TrimSpace(m.searchInput.Value())
+				if q != "" {
+					m.status = "🔍 Searching…"
+					cmds = append(cmds, searchCmd(q))
+				}
+			} else if km.Type == tea.KeyDown && len(m.searchTracks) > 0 {
+				// Down arrow moves to search results if available
+				m.focus = focusSearchResults
+				m.searchInput.Blur()
+				return m, nil
 			}
 		}
 		cmds = append(cmds, cmd)
@@ -755,7 +773,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-
+// cycleFocus cycles through the main focus areas: Playlists -> Search -> Playlists
+func (m *tuiModel) cycleFocus() {
+	switch m.focus {
+	case focusPlaylists:
+		m.focus = focusSearch
+	case focusTracks:
+		m.focus = focusSearch
+	case focusSearch, focusSearchResults:
+		m.focus = focusPlaylists
+	default:
+		m.focus = focusPlaylists
+	}
+}
 
 // playback helpers using existing playback.go functions
 
@@ -913,6 +943,7 @@ func (m tuiModel) renderSidebar(width int) string {
 	helpLines := []string{
 		"⌨️  Shortcuts",
 		"",
+		helpStyle.Render("  Tab  Cycle panels"),
 		helpStyle.Render("  /,s  Search"),
 		helpStyle.Render("  p    Playlists"),
 		helpStyle.Render("  ␣    Play/Pause"),
