@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -21,15 +22,128 @@ import (
 // ---------- Styling ----------
 
 var (
-	primaryColor  = lipgloss.Color("#7DF9FF") // neon cyan
-	bgColor       = lipgloss.Color("#050608")
-	borderFg      = lipgloss.Color("#3C3F51")
-	dimColor      = lipgloss.Color("#7B7D8A")
-	playingColor  = lipgloss.Color("#9AEDFE")
-	sectionHeader = lipgloss.NewStyle().Foreground(primaryColor).Bold(true)
-	titleStyle    = lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Padding(0, 1)
-	statusStyle   = lipgloss.NewStyle().Foreground(dimColor).Background(bgColor).Padding(0, 1)
-	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderFg).Padding(0, 1).Margin(0, 1)
+	// Color Palette - Spotify-inspired with modern aesthetics
+	spotifyGreen   = lipgloss.Color("#1DB954")
+	spotifyBlack   = lipgloss.Color("#121212")
+	spotifyDark    = lipgloss.Color("#181818")
+	spotifyGray    = lipgloss.Color("#282828")
+	spotifyLight   = lipgloss.Color("#B3B3B3")
+	accentPink     = lipgloss.Color("#E91E63")
+	// accentPurple   = lipgloss.Color("#9B59B6")
+	accentCyan     = lipgloss.Color("#00BCD4")
+	// accentOrange   = lipgloss.Color("#FF9800")
+	white          = lipgloss.Color("#FFFFFF")
+	subtleGray     = lipgloss.Color("#404040")
+	// highlightGreen = lipgloss.Color("#1ED760")
+
+	// Gradient-like effect colors
+	// gradientStart = lipgloss.Color("#667eea")
+	// gradientEnd   = lipgloss.Color("#764ba2")
+
+	// Main styles
+	sectionHeader = lipgloss.NewStyle().
+			Foreground(spotifyGreen).
+			Bold(true).
+			MarginBottom(1)
+
+	// titleStyle = lipgloss.NewStyle().
+	// 		Foreground(spotifyGreen).
+	// 		Bold(true).
+	// 		Padding(0, 1)
+
+	logoStyle = lipgloss.NewStyle().
+			Foreground(spotifyGreen).
+			Bold(true)
+
+	// statusStyle = lipgloss.NewStyle().
+	// 		Foreground(spotifyLight).
+	// 		Background(spotifyDark).
+	// 		Padding(0, 2).
+	// 		MarginTop(1)
+
+	// Box styles with different themes
+	sidebarBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(subtleGray).
+			Padding(1, 2).
+			Background(spotifyDark)
+
+	contentBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(subtleGray).
+			Padding(1, 2).
+			Background(spotifyBlack)
+
+	// Focused box style
+	// focusedBoxStyle = lipgloss.NewStyle().
+	// 		Border(lipgloss.RoundedBorder()).
+	// 		BorderForeground(spotifyGreen).
+	// 		Padding(1, 2).
+	// 		Background(spotifyBlack)
+
+	// Sidebar item styles
+	sidebarItemStyle = lipgloss.NewStyle().
+				Foreground(spotifyLight).
+				PaddingLeft(2)
+
+	// sidebarItemActiveStyle = lipgloss.NewStyle().
+	// 			Foreground(white).
+	// 			Background(spotifyGray).
+	// 			Bold(true).
+	// 			PaddingLeft(2).
+	// 			PaddingRight(2)
+
+	sidebarItemFocusedStyle = lipgloss.NewStyle().
+				Foreground(spotifyBlack).
+				Background(spotifyGreen).
+				Bold(true).
+				PaddingLeft(2).
+				PaddingRight(2)
+
+	// Help text style
+	helpStyle = lipgloss.NewStyle().
+			Foreground(subtleGray).
+			Italic(true)
+
+	// Now playing indicator
+	nowPlayingStyle = lipgloss.NewStyle().
+			Foreground(spotifyGreen).
+			Bold(true)
+
+	// Divider style
+	dividerStyle = lipgloss.NewStyle().
+			Foreground(subtleGray)
+
+	// Search input style
+	// searchBoxStyle = lipgloss.NewStyle().
+	// 		Border(lipgloss.RoundedBorder()).
+	// 		BorderForeground(accentCyan).
+	// 		Padding(0, 1).
+	// 		MarginBottom(1)
+
+	// // Track info styles
+	// trackTitleStyle = lipgloss.NewStyle().
+	// 		Foreground(white).
+	// 		Bold(true)
+
+	// trackArtistStyle = lipgloss.NewStyle().
+	// 			Foreground(spotifyLight)
+
+	// Status indicators
+	playingIndicatorStyle = lipgloss.NewStyle().
+				Foreground(spotifyGreen).
+				Bold(true)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(accentPink).
+			Bold(true)
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(spotifyGreen)
+
+	// Header decoration
+	// headerDecorStyle = lipgloss.NewStyle().
+	// 			Foreground(gradientStart)
 )
 
 // ---------- Keymap ----------
@@ -123,6 +237,82 @@ func (p playlistItem) Title() string       { return p.name }
 func (p playlistItem) Description() string { return "" }
 func (p playlistItem) FilterValue() string { return p.name }
 
+// ---------- Custom List Delegate ----------
+
+type customDelegate struct {
+	showDesc   bool
+	isPlaylist bool
+}
+
+func newCustomDelegate(showDesc, isPlaylist bool) customDelegate {
+	return customDelegate{showDesc: showDesc, isPlaylist: isPlaylist}
+}
+
+func (d customDelegate) Height() int {
+	if d.showDesc {
+		return 2
+	}
+	return 1
+}
+
+func (d customDelegate) Spacing() int { return 0 }
+
+func (d customDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+
+func (d customDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	var title, desc string
+
+	if i, ok := item.(trackRow); ok {
+		title = i.Title()
+		desc = i.Description()
+	} else if i, ok := item.(playlistItem); ok {
+		title = i.Title()
+		desc = ""
+	} else {
+		return
+	}
+
+	selected := index == m.Index()
+
+	// Icons
+	playlistIcon := "📁"
+	trackIcon := "♪"
+	selectedIcon := "▶"
+
+	icon := trackIcon
+	if d.isPlaylist {
+		icon = playlistIcon
+	}
+
+	// Styling based on selection state
+	var titleStr string
+	if selected {
+		titleStyle := lipgloss.NewStyle().
+			Foreground(spotifyBlack).
+			Background(spotifyGreen).
+			Bold(true).
+			Padding(0, 1)
+		titleStr = titleStyle.Render(fmt.Sprintf("%s %s", selectedIcon, title))
+	} else {
+		titleStyle := lipgloss.NewStyle().
+			Foreground(white).
+			Padding(0, 1)
+		titleStr = titleStyle.Render(fmt.Sprintf("%s %s", icon, title))
+	}
+
+	fmt.Fprint(w, titleStr)
+
+	if d.showDesc && desc != "" {
+		descStyle := lipgloss.NewStyle().
+			Foreground(spotifyLight).
+			PaddingLeft(4)
+		if selected {
+			descStyle = descStyle.Foreground(subtleGray)
+		}
+		fmt.Fprintf(w, "\n%s", descStyle.Render(desc))
+	}
+}
+
 type tuiModel struct {
 	width  int
 	height int
@@ -182,44 +372,73 @@ type profileLoadedMsg struct {
 	logged  bool
 }
 
+type playbackUpdatedMsg struct {
+	info *PlaybackInfo
+}
+
 // ---------- Init helpers ----------
 
 func initialModel() tuiModel {
 	ti := textinput.New()
-	ti.Placeholder = "Search tracks..."
+	ti.Placeholder = "🔍 Search for tracks, artists, albums..."
 	ti.Focus()
 	ti.CharLimit = 128
+	ti.Width = 40
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(accentCyan)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(white)
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(subtleGray).Italic(true)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(spotifyGreen)
 
-	sidebar := []string{"Now Playing", "Playlists", "Search", "Profile", "Controls"}
+	sidebar := []string{"🎵 Now Playing", "📁 Playlists", "🔍 Search"}
 
-	playlistList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	playlistList.Title = "Playlists"
+	// Custom delegate for playlists (no description, playlist icons)
+	playlistDelegate := newCustomDelegate(false, true)
+	playlistList := list.New(nil, playlistDelegate, 0, 0)
+	playlistList.Title = "📁 Playlists"
 	playlistList.SetShowStatusBar(false)
 	playlistList.SetFilteringEnabled(true)
 	playlistList.SetShowHelp(false)
+	playlistList.Styles.Title = lipgloss.NewStyle().
+		Foreground(spotifyGreen).
+		Bold(true).
+		MarginBottom(1)
+	playlistList.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(accentCyan)
+	playlistList.Styles.FilterCursor = lipgloss.NewStyle().Foreground(spotifyGreen)
 
-	trackList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	trackList.Title = "Tracks"
+	// Custom delegate for tracks (with description/artist)
+	trackDelegate := newCustomDelegate(true, false)
+	trackList := list.New(nil, trackDelegate, 0, 0)
+	trackList.Title = "♪ Tracks"
 	trackList.SetShowStatusBar(false)
 	trackList.SetFilteringEnabled(false)
 	trackList.SetShowHelp(false)
+	trackList.Styles.Title = lipgloss.NewStyle().
+		Foreground(spotifyGreen).
+		Bold(true).
+		MarginBottom(1)
 
-	searchList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	searchList.Title = "Search Results"
+	// Custom delegate for search results (with description)
+	searchDelegate := newCustomDelegate(true, false)
+	searchList := list.New(nil, searchDelegate, 0, 0)
+	searchList.Title = "🔍 Search Results"
 	searchList.SetShowStatusBar(false)
 	searchList.SetFilteringEnabled(false)
 	searchList.SetShowHelp(false)
+	searchList.Styles.Title = lipgloss.NewStyle().
+		Foreground(accentCyan).
+		Bold(true).
+		MarginBottom(1)
 
 	return tuiModel{
-		keys:  defaultKeyMap(),
-		status: "Welcome to Gitify TUI · Loading profile…",
-		focus: focusSidebar,
+		keys:            defaultKeyMap(),
+		status:          "✨ Welcome to Gitify TUI · Loading profile…",
+		focus:           focusSidebar,
 		sidebarSections: sidebar,
-		playlistList:   playlistList,
-		trackList:      trackList,
-		searchInput:    ti,
-		searchList:     searchList,
-		lastActionAt:   time.Now(),
+		playlistList:    playlistList,
+		trackList:       trackList,
+		searchInput:     ti,
+		searchList:      searchList,
+		lastActionAt:    time.Now(),
 	}
 }
 
@@ -327,6 +546,16 @@ func searchCmd(query string) tea.Cmd {
 	}
 }
 
+func fetchPlaybackCmd() tea.Cmd {
+	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+		info, err := GetCurrentPlayback()
+		if err != nil {
+			return nil // silently ignore errors
+		}
+		return playbackUpdatedMsg{info: info}
+	})
+}
+
 // ---------- Bubble Tea interface ----------
 
 func (m tuiModel) Init() tea.Cmd {
@@ -346,13 +575,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.isLoggedIn = msg.logged
 		m.userProfile = msg.profile
 		if !m.isLoggedIn {
-			m.status = "Not logged in · Run `gitify spotify login` and then open TUI"
+			m.status = "🔐 Not logged in · Run `gitify spotify login` first"
 		} else {
 			if m.userProfile != nil {
-				m.status = fmt.Sprintf("Hello, %s · Loading playlists…", m.userProfile.Username)
+				m.status = fmt.Sprintf("👋 Hello, %s · Loading playlists…", m.userProfile.Username)
 				cmds = append(cmds, loadPlaylistsCmd(m.userProfile.Userid))
 			} else {
-				m.status = "Logged in · Loading playlists…"
+				m.status = "✅ Logged in · Loading playlists…"
 				// fallback user info
 				cmds = append(cmds, loadPlaylistsCmd("me"))
 			}
@@ -365,9 +594,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.playlistList.SetItems(items)
 		if len(items) == 0 {
-			m.status = "No playlists found"
+			m.status = "📭 No playlists found"
 		} else {
-			m.status = fmt.Sprintf("Loaded %d playlists", len(items))
+			m.status = fmt.Sprintf("📁 Loaded %d playlists", len(items))
 		}
 	case tracksLoadedMsg:
 		if msg.playlistIdx < 0 || msg.playlistIdx >= len(m.playlists) {
@@ -387,9 +616,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.trackList.SetItems(items)
 		if len(items) == 0 {
-			m.status = "This playlist has no tracks"
+			m.status = "📭 This playlist has no tracks"
 		} else {
-			m.status = fmt.Sprintf("Loaded %d tracks from playlist", len(items))
+			m.status = fmt.Sprintf("🎵 Loaded %d tracks", len(items))
 		}
 		m.focus = focusTracks
 	case searchResultsMsg:
@@ -406,14 +635,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchList.SetItems(items)
 		if len(items) == 0 {
-			m.status = fmt.Sprintf("No results for %q", msg.query)
+			m.status = fmt.Sprintf("🔍 No results for %q", msg.query)
 		} else {
-			m.status = fmt.Sprintf("Found %d tracks for %q", len(items), msg.query)
+			m.status = fmt.Sprintf("🔍 Found %d tracks for %q", len(items), msg.query)
 		}
 		m.focus = focusSearchResults
 	case errMsg:
 		m.errMsg = msg.Error()
-		m.status = "Error: " + msg.Error()
+		m.status = "❌ Error: " + msg.Error()
+	case playbackUpdatedMsg:
+		if msg.info != nil {
+			m.isPlaying = msg.info.IsPlaying
+			if msg.info.TrackName != "" {
+				m.currentTrackURI = msg.info.TrackURI
+				if m.isPlaying {
+					m.status = fmt.Sprintf("🎵 Playing: %s — %s", msg.info.TrackName, msg.info.ArtistName)
+				} else {
+					m.status = fmt.Sprintf("⏸ Paused: %s — %s", msg.info.TrackName, msg.info.ArtistName)
+				}
+			}
+		}
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
@@ -427,7 +668,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if key.Matches(msg, m.keys.Playlists) {
 			if len(m.playlistList.Items()) == 0 {
-				m.status = "No playlists loaded yet"
+				m.status = "📭 No playlists loaded yet"
 				return m, nil
 			}
 			m.focus = focusPlaylists
@@ -445,20 +686,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.isPlaying {
 				go PausePlayback()
 				m.isPlaying = false
+				m.status = "⏸ Paused"
 			} else {
 				go ResumePlayback()
 				m.isPlaying = true
+				m.status = "▶ Resumed"
 			}
 			m.lastActionAt = time.Now()
-			return m, nil
+			return m, fetchPlaybackCmd()
 		case key.Matches(msg, m.keys.Next):
 			go NextTrack()
 			m.lastActionAt = time.Now()
-			return m, nil
+			m.status = "⏭ Skipping to next..."
+			return m, fetchPlaybackCmd()
 		case key.Matches(msg, m.keys.Prev):
 			go PreviousTrack()
 			m.lastActionAt = time.Now()
-			return m, nil
+			m.status = "⏮ Going to previous..."
+			return m, fetchPlaybackCmd()
 		}
 	}
 
@@ -473,7 +718,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			idx := m.playlistList.Index()
 			if idx >= 0 && idx < len(m.playlists) {
-				m.status = "Loading tracks…"
+				m.status = "⏳ Loading tracks…"
 				cmds = append(cmds, loadTracksCmd(m.playlists[idx], idx))
 			}
 		}
@@ -491,7 +736,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEnter {
 			q := strings.TrimSpace(m.searchInput.Value())
 			if q != "" {
-				m.status = "Searching…"
+				m.status = "🔍 Searching…"
 				cmds = append(cmds, searchCmd(q))
 			}
 		}
@@ -510,36 +755,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *tuiModel) cycleFocus() {
-	switch m.focus {
-	case focusSidebar:
-		if len(m.playlists) > 0 {
-			m.focus = focusPlaylists
-			return
-		}
-		if len(m.currentTracks) > 0 {
-			m.focus = focusTracks
-			return
-		}
-		m.focus = focusSearch
-	case focusPlaylists:
-		if len(m.currentTracks) > 0 {
-			m.focus = focusTracks
-		} else {
-			m.focus = focusSearch
-		}
-	case focusTracks:
-		m.focus = focusSearch
-	case focusSearch:
-		if len(m.searchTracks) > 0 {
-			m.focus = focusSearchResults
-		} else {
-			m.focus = focusSidebar
-		}
-	case focusSearchResults:
-		m.focus = focusSidebar
-	}
-}
+
 
 // playback helpers using existing playback.go functions
 
@@ -553,7 +769,7 @@ func (m *tuiModel) playSelectedTrackFromList() {
 	}
 	track := m.currentTracks[idx].Track
 	if track.URI == "" {
-		m.status = "Track URI not available"
+		m.status = "⚠️ Track URI not available"
 		return
 	}
 	// Prefer playlist context when possible
@@ -576,7 +792,7 @@ func (m *tuiModel) playSelectedTrackFromList() {
 	m.isPlaying = true
 	m.currentTrackURI = track.URI
 	m.lastActionAt = time.Now()
-	m.status = fmt.Sprintf("Playing %s — %s", track.Name, joinArtists(track.Artists))
+	m.status = fmt.Sprintf("🎵 Playing: %s — %s", track.Name, joinArtists(track.Artists))
 }
 
 func (m *tuiModel) playSelectedSearchTrackFromList() {
@@ -589,7 +805,7 @@ func (m *tuiModel) playSelectedSearchTrackFromList() {
 	}
 	track := m.searchTracks[idx]
 	if track.URI == "" {
-		m.status = "Track URI not available"
+		m.status = "⚠️ Track URI not available"
 		return
 	}
 	uris := []string{track.URI}
@@ -597,7 +813,7 @@ func (m *tuiModel) playSelectedSearchTrackFromList() {
 	m.isPlaying = true
 	m.currentTrackURI = track.URI
 	m.lastActionAt = time.Now()
-	m.status = fmt.Sprintf("Playing %s — %s", track.Name, m.getSearchArtistNames(track.Artists))
+	m.status = fmt.Sprintf("🎵 Playing: %s — %s", track.Name, m.getSearchArtistNames(track.Artists))
 }
 
 // artist helpers (reused logic from old TUI)
@@ -613,20 +829,31 @@ func (m *tuiModel) getSearchArtistNames(artists []ArtistResp) string {
 
 func (m tuiModel) View() string {
 	if m.width == 0 || m.height == 0 {
-		return "Loading Gitify TUI…"
+		return logoStyle.Render("  🎵 Loading Gitify TUI…")
 	}
 
-	sidebarWidth := 20
-	contentWidth := m.width - sidebarWidth - 4
+	sidebarWidth := 24
+	contentWidth := m.width - sidebarWidth - 6
 
-	sidebar := m.renderSidebar(sidebarWidth - 2)
-	content := m.renderContent(contentWidth - 2)
+	// Determine which box style to use based on focus
+	sidebarStyle := sidebarBoxStyle
+	contentStyle := contentBoxStyle
+
+	if m.focus == focusSidebar {
+		sidebarStyle = sidebarStyle.BorderForeground(spotifyGreen)
+	}
+	if m.focus == focusPlaylists || m.focus == focusTracks || m.focus == focusSearch || m.focus == focusSearchResults {
+		contentStyle = contentStyle.BorderForeground(spotifyGreen)
+	}
+
+	sidebar := m.renderSidebar(sidebarWidth - 4)
+	content := m.renderContent(contentWidth - 4)
 	status := m.renderStatusBar()
 
 	main := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		boxStyle.Width(sidebarWidth).Render(sidebar),
-		boxStyle.Width(contentWidth).Render(content),
+		sidebarStyle.Width(sidebarWidth).Height(m.height-4).Render(sidebar),
+		contentStyle.Width(contentWidth).Height(m.height-4).Render(content),
 	)
 
 	return lipgloss.JoinVertical(
@@ -639,23 +866,61 @@ func (m tuiModel) View() string {
 func (m tuiModel) renderSidebar(width int) string {
 	var rows []string
 
-	title := titleStyle.Render("Gitify")
-	rows = append(rows, title, "")
+	// ASCII Art Logo
+	logo := `
+ ██████╗ ██╗████████╗██╗███████╗██╗   ██╗
+██╔════╝ ██║╚══██╔══╝██║██╔════╝╚██╗ ██╔╝
+██║  ███╗██║   ██║   ██║█████╗   ╚████╔╝ 
+██║   ██║██║   ██║   ██║██╔══╝    ╚██╔╝  
+╚██████╔╝██║   ██║   ██║██║        ██║   
+ ╚═════╝ ╚═╝   ╚═╝   ╚═╝╚═╝        ╚═╝`
 
-	for i, s := range m.sidebarSections {
-		line := s
-		if i == 0 && m.isPlaying {
-			line = fmt.Sprintf("♪ %s", s)
-		}
-		st := lipgloss.NewStyle().Foreground(dimColor)
-		if focusSidebar == m.focus && i == m.sidebarIndex {
-			st = st.Foreground(primaryColor).Bold(true)
-		}
-		rows = append(rows, st.Render(line))
+	// Compact logo for narrow sidebars
+	compactLogo := logoStyle.Render("🎵 Gitify")
+	if width > 45 {
+		rows = append(rows, logoStyle.Render(logo))
+	} else {
+		rows = append(rows, compactLogo)
 	}
 
-	rows = append(rows, "", lipgloss.NewStyle().Foreground(dimColor).Render("Tab: cycle focus"))
-	rows = append(rows, lipgloss.NewStyle().Foreground(dimColor).Render("/: search · h: help · q: quit"))
+	rows = append(rows, "")
+	rows = append(rows, dividerStyle.Render(strings.Repeat("─", width)))
+	rows = append(rows, "")
+
+	// Menu items with better styling
+	for i, s := range m.sidebarSections {
+		var itemStyle lipgloss.Style
+
+		if focusSidebar == m.focus && i == m.sidebarIndex {
+			itemStyle = sidebarItemFocusedStyle
+		} else if i == 0 && m.isPlaying {
+			itemStyle = nowPlayingStyle
+		} else {
+			itemStyle = sidebarItemStyle
+		}
+
+		line := itemStyle.Render(s)
+		rows = append(rows, line)
+	}
+
+	rows = append(rows, "")
+	rows = append(rows, dividerStyle.Render(strings.Repeat("─", width)))
+	rows = append(rows, "")
+
+	// Help section with better formatting
+	helpLines := []string{
+		"⌨️  Shortcuts",
+		"",
+		helpStyle.Render("  /,s  Search"),
+		helpStyle.Render("  p    Playlists"),
+		helpStyle.Render("  ␣    Play/Pause"),
+		helpStyle.Render("  ←/→  Prev/Next"),
+		helpStyle.Render("  q    Quit"),
+	}
+
+	for _, line := range helpLines {
+		rows = append(rows, line)
+	}
 
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(rows, "\n"))
 }
@@ -675,81 +940,180 @@ func (m tuiModel) renderContent(width int) string {
 
 func (m tuiModel) renderPlaylistsAndTracks(width int) string {
 	colWidth := width / 2
-	if colWidth < 24 {
-		colWidth = 24
+	if colWidth < 28 {
+		colWidth = 28
 	}
 
-	// adjust lists to size
+	// Adjust lists to size
 	m.playlistList.SetWidth(colWidth - 4)
-	m.playlistList.SetHeight(m.height - 6)
+	m.playlistList.SetHeight(m.height - 10)
 	m.trackList.SetWidth(colWidth - 4)
-	m.trackList.SetHeight(m.height - 6)
+	m.trackList.SetHeight(m.height - 10)
 
-	// mark focus
-	plTitle := "Playlists"
+	// Mark focus with styled titles
 	if m.focus == focusPlaylists {
-		plTitle = "▶ Playlists"
+		m.playlistList.Title = "▶ 📁 Playlists"
+		m.playlistList.Styles.Title = lipgloss.NewStyle().
+			Foreground(spotifyGreen).
+			Bold(true).
+			Background(spotifyGray).
+			Padding(0, 1).
+			MarginBottom(1)
+	} else {
+		m.playlistList.Title = "📁 Playlists"
+		m.playlistList.Styles.Title = lipgloss.NewStyle().
+			Foreground(spotifyLight).
+			Bold(true).
+			MarginBottom(1)
 	}
-	m.playlistList.Title = plTitle
 
-	trTitle := "Tracks"
 	if m.focus == focusTracks {
-		trTitle = "▶ Tracks"
+		m.trackList.Title = "▶ ♪ Tracks"
+		m.trackList.Styles.Title = lipgloss.NewStyle().
+			Foreground(spotifyGreen).
+			Bold(true).
+			Background(spotifyGray).
+			Padding(0, 1).
+			MarginBottom(1)
+	} else {
+		m.trackList.Title = "♪ Tracks"
+		m.trackList.Styles.Title = lipgloss.NewStyle().
+			Foreground(spotifyLight).
+			Bold(true).
+			MarginBottom(1)
 	}
+
+	// Add playlist name to tracks title if selected
 	if m.currentPlaylistIdx >= 0 && m.currentPlaylistIdx < len(m.playlists) {
-		trTitle = fmt.Sprintf("%s · %s", trTitle, m.playlists[m.currentPlaylistIdx].Name)
+		playlistName := m.playlists[m.currentPlaylistIdx].Name
+		if len(playlistName) > 20 {
+			playlistName = playlistName[:17] + "..."
+		}
+		if m.focus == focusTracks {
+			m.trackList.Title = fmt.Sprintf("▶ ♪ %s", playlistName)
+		} else {
+			m.trackList.Title = fmt.Sprintf("♪ %s", playlistName)
+		}
 	}
-	m.trackList.Title = trTitle
 
-	left := m.playlistList.View()
-	right := m.trackList.View()
+	// Style the columns with subtle borders
+	leftStyle := lipgloss.NewStyle().
+		Width(colWidth).
+		BorderRight(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(subtleGray).
+		PaddingRight(1)
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		lipgloss.NewStyle().Width(colWidth).Render(left),
-		lipgloss.NewStyle().Width(colWidth).Render(right),
-	)
+	rightStyle := lipgloss.NewStyle().
+		Width(colWidth).
+		PaddingLeft(1)
+
+	left := leftStyle.Render(m.playlistList.View())
+	right := rightStyle.Render(m.trackList.View())
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
 func (m tuiModel) renderSearch(width int) string {
-	searchBox := m.searchInput.View()
+	var sections []string
+
+	// Search header
+	searchTitle := sectionHeader.Render("🔍 Search")
 	if m.focus == focusSearch {
-		searchBox = sectionHeader.Render("Search") + "\n" + searchBox
-	} else {
-		searchBox = "Search\n" + searchBox
+		searchTitle = lipgloss.NewStyle().
+			Foreground(spotifyBlack).
+			Background(accentCyan).
+			Bold(true).
+			Padding(0, 1).
+			Render("▶ 🔍 Search")
+	}
+	sections = append(sections, searchTitle)
+
+	// Styled search input box
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(subtleGray).
+		Padding(0, 1).
+		Width(width - 4)
+
+	if m.focus == focusSearch {
+		inputStyle = inputStyle.BorderForeground(accentCyan)
 	}
 
+	sections = append(sections, inputStyle.Render(m.searchInput.View()))
+	sections = append(sections, "")
+
+	// Search results
 	m.searchList.SetWidth(width - 4)
-	m.searchList.SetHeight(m.height - 8)
+	m.searchList.SetHeight(m.height - 14)
+
 	if m.focus == focusSearchResults {
-		m.searchList.Title = "▶ Search Results"
+		m.searchList.Title = "▶ 🔍 Search Results"
+		m.searchList.Styles.Title = lipgloss.NewStyle().
+			Foreground(accentCyan).
+			Bold(true).
+			Background(spotifyGray).
+			Padding(0, 1).
+			MarginBottom(1)
 	} else {
-		m.searchList.Title = "Search Results"
+		m.searchList.Title = "🔍 Search Results"
+		m.searchList.Styles.Title = lipgloss.NewStyle().
+			Foreground(spotifyLight).
+			Bold(true).
+			MarginBottom(1)
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		searchBox,
-		"",
-		m.searchList.View(),
-	)
+	sections = append(sections, m.searchList.View())
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (m tuiModel) renderStatusBar() string {
-	var pieces []string
+	// Left side: playback status
+	var leftParts []string
+
 	if m.isPlaying {
-		pieces = append(pieces, lipgloss.NewStyle().Foreground(playingColor).Render("♪ Playing"))
+		playIcon := playingIndicatorStyle.Render("▶ Now Playing")
+		leftParts = append(leftParts, playIcon)
+	} else {
+		pauseIcon := lipgloss.NewStyle().Foreground(spotifyLight).Render("⏸ Paused")
+		leftParts = append(leftParts, pauseIcon)
 	}
+
+	// Status message
 	if m.status != "" {
-		pieces = append(pieces, m.status)
+		statusMsg := m.status
+		if strings.HasPrefix(statusMsg, "Error") {
+			statusMsg = errorStyle.Render("⚠ " + statusMsg)
+		} else if strings.Contains(statusMsg, "Playing") {
+			statusMsg = successStyle.Render("🎵 " + statusMsg)
+		} else {
+			statusMsg = lipgloss.NewStyle().Foreground(spotifyLight).Render(statusMsg)
+		}
+		leftParts = append(leftParts, statusMsg)
 	}
 
-	line := strings.Join(pieces, " · ")
+	leftContent := strings.Join(leftParts, " │ ")
 
-	// Keep status bar to a single line so it doesn't corrupt the TUI layout
+	// Right side: controls hint
+	rightContent := helpStyle.Render("␣: Play/Pause  ←→: Skip  q: Quit")
+
+	// Calculate spacing
+	leftLen := lipgloss.Width(leftContent)
+	rightLen := lipgloss.Width(rightContent)
+	spacerLen := m.width - leftLen - rightLen - 6
+	if spacerLen < 1 {
+		spacerLen = 1
+	}
+
+	spacer := strings.Repeat(" ", spacerLen)
+
+	fullStatus := leftContent + spacer + rightContent
+
+	// Keep status bar to a single line
 	if m.width > 0 {
-		runes := []rune(line)
-		max := m.width - 2
+		runes := []rune(fullStatus)
+		max := m.width - 4
 		if max < 0 {
 			max = 0
 		}
@@ -760,11 +1124,16 @@ func (m tuiModel) renderStatusBar() string {
 			} else {
 				runes = runes[:max]
 			}
-			line = string(runes)
+			fullStatus = string(runes)
 		}
 	}
 
-	return statusStyle.Width(m.width).Render(line)
+	return lipgloss.NewStyle().
+		Background(spotifyDark).
+		Foreground(spotifyLight).
+		Padding(0, 2).
+		Width(m.width).
+		Render(fullStatus)
 }
 
 // TUI command

@@ -22,6 +22,26 @@ type PlaybackOffset struct {
     URI      *string `json:"uri,omitempty"`
 }
 
+// CurrentPlayback represents the response from Spotify's current playback endpoint
+type CurrentPlayback struct {
+    IsPlaying bool `json:"is_playing"`
+    Item      *struct {
+        Name    string `json:"name"`
+        URI     string `json:"uri"`
+        Artists []struct {
+            Name string `json:"name"`
+        } `json:"artists"`
+    } `json:"item"`
+}
+
+// PlaybackInfo holds simplified playback information for the TUI
+type PlaybackInfo struct {
+    IsPlaying  bool
+    TrackName  string
+    ArtistName string
+    TrackURI   string
+}
+
 // When Gitify is running inside the Bubble Tea TUI we don't want the
 // playback helpers to print directly to stdout because that corrupts
 // the screen layout and makes list highlighting look wrong.
@@ -31,6 +51,57 @@ var silentPlayback bool
 // The TUI sets this to true; CLI commands keep the default (false).
 func SetPlaybackSilent(s bool) {
 	silentPlayback = s
+}
+
+// GetCurrentPlayback fetches the current playback state from Spotify
+func GetCurrentPlayback() (*PlaybackInfo, error) {
+    client, err := utils.NewSpotifyClient()
+    if err != nil {
+        return nil, err
+    }
+
+    resp, err := client.Get("https://api.spotify.com/v1/me/player/currently-playing")
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    // 204 means no content (nothing playing)
+    if resp.StatusCode == 204 {
+        return &PlaybackInfo{IsPlaying: false}, nil
+    }
+
+    if resp.StatusCode != 200 {
+        return nil, fmt.Errorf("failed to get playback: status %d", resp.StatusCode)
+    }
+
+    var playback CurrentPlayback
+    if err := json.NewDecoder(resp.Body).Decode(&playback); err != nil {
+        return nil, err
+    }
+
+    info := &PlaybackInfo{
+        IsPlaying: playback.IsPlaying,
+    }
+
+    if playback.Item != nil {
+        info.TrackName = playback.Item.Name
+        info.TrackURI = playback.Item.URI
+        var artists []string
+        for _, a := range playback.Item.Artists {
+            artists = append(artists, a.Name)
+        }
+        if len(artists) > 0 {
+            info.ArtistName = artists[0]
+            if len(artists) > 1 {
+                for i := 1; i < len(artists); i++ {
+                    info.ArtistName += ", " + artists[i]
+                }
+            }
+        }
+    }
+
+    return info, nil
 }
 
 func StartMusic(contextURI *string, uris *[]string) {
