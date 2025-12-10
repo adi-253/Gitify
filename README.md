@@ -45,8 +45,10 @@ A terminal-first Spotify CLI/TUI powered by Bubble Tea. Gitify manages login, pl
 
 - Spotify Premium is required for playback control and streaming endpoints.
 
+
 ## Notes
 
 - Tokens/credentials are stored in `token.json` and `profile.json` (`.gitignore`-d).
 - The app automatically refreshes the access token when expired.
-- Silent playback mode is enabled when running the Bubble Tea TUI to keep the UI clean.
+- Also for playing it on the device you want , spotify should be open in that device and also play and pause once 
+  so that the device gets recognized by the Gitify to play the song there.
