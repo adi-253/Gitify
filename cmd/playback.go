@@ -105,11 +105,23 @@ func GetCurrentPlayback() (*PlaybackInfo, error) {
 }
 
 func StartMusic(contextURI *string, uris *[]string) {
+    StartMusicWithOffset(contextURI, uris, nil)
+}
+
+// StartMusicWithOffset starts playback with an optional offset position
+func StartMusicWithOffset(contextURI *string, uris *[]string, offsetPosition *int) {
     req := PlaybackRequest{
         ContextURI: contextURI,
         Uris:       uris,
         Offset:     nil,
         PositionMS: nil,
+    }
+
+    // If offset position is provided, set it
+    if offsetPosition != nil {
+        req.Offset = &PlaybackOffset{
+            Position: offsetPosition,
+        }
     }
 
 	

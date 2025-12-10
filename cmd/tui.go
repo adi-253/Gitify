@@ -772,18 +772,20 @@ func (m *tuiModel) playSelectedTrackFromList() {
 		m.status = "⚠️ Track URI not available"
 		return
 	}
-	// Prefer playlist context when possible
+	// Prefer playlist context when possible, with correct offset
 	if m.currentPlaylistIdx >= 0 && m.currentPlaylistIdx < len(m.playlists) {
 		pl := m.playlists[m.currentPlaylistIdx]
 		playlistURI := pl.Uri
 		if playlistURI == "" {
 			playlistURI = "spotify:playlist:" + pl.ID
 		}
+		// Pass the track index as offset so playback starts from selected track
+		trackOffset := idx
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = ctx // currently unused, but ready for extensions
-			StartMusic(&playlistURI, nil)
+			StartMusicWithOffset(&playlistURI, nil, &trackOffset)
 		}()
 	} else {
 		uris := []string{track.URI}
